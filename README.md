@@ -111,6 +111,16 @@ Webb-UI:t erbjuder:
 
 ZIP-export innehåller originalfiler, metadata, extraherad text och manifest.
 
+## Acceptansverifiering
+
+Efter build kan kärnflödena verifieras i samma container som driftmiljön:
+
+```bash
+docker compose run --rm dokumenteraren python scripts/verify_acceptance.py
+```
+
+Skriptet kör mot en temporär datakatalog och verifierar auth/lösenordsbyte, API-import, indexering/sök för vanliga format, disabled AI-chat med redaktion, JSON/CSV/ZIP-export och säkra ZIP-filnamn.
+
 ## Driftanteckningar
 
 - Health endpoint: `GET /healthz`

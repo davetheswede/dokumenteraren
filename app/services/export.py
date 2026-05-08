@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import csv
 import json
+import re
 import zipfile
 from pathlib import Path
 
 from ..config import EXPORT_DIR
-from ..security import safe_filename
 from .documents import document_to_dict, get_document, search_documents
+
+
+ZIP_SAFE_SEGMENT_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
 
 def export_metadata_json(rows) -> str:
@@ -40,6 +43,19 @@ def export_metadata_csv(rows) -> str:
     return "".join(output)
 
 
+def safe_zip_member(prefix: str, filename: str, document_id: int) -> str:
+    safe_prefix = prefix.strip("/").replace("\\", "/")
+    if "/" in safe_prefix or safe_prefix in {"", ".", ".."}:
+        raise ValueError("Ogiltigt ZIP-prefix.")
+
+    leaf = Path(filename.replace("\\", "/")).name.strip()
+    leaf = ZIP_SAFE_SEGMENT_RE.sub("_", leaf).strip("._")
+    if not leaf:
+        leaf = "document"
+    leaf = leaf[:180]
+    return f"{safe_prefix}/{document_id}_{leaf}"
+
+
 def create_zip(document_ids: list[int]) -> Path:
     if not document_ids:
         rows = search_documents()
@@ -54,7 +70,7 @@ def create_zip(document_ids: list[int]) -> Path:
             manifest.append(info)
             original = Path(row["storage_path"])
             if original.exists():
-                archive.write(original, f"original/{row['id']}_{safe_filename(row['original_filename'])}")
+                archive.write(original, safe_zip_member("original", row["original_filename"], row["id"]))
             archive.writestr(f"metadata/{row['id']}.json", json.dumps(info, ensure_ascii=False, indent=2))
             archive.writestr(f"text/{row['id']}.md", row["extracted_text"] or "")
         archive.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
