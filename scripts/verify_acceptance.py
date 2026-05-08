@@ -308,6 +308,24 @@ def main() -> None:
             settings_page = client.get("/settings")
             assert settings_page.status_code == 200
             assert "Disabled" in settings_page.text
+            token_form = client.post(
+                "/settings/api-token",
+                data={"csrf_token": csrf(settings_page), "token_name": "acceptance-ui"},
+                follow_redirects=False,
+            )
+            assert token_form.status_code == 303
+            token_location = token_form.headers["location"]
+            assert token_location.startswith("/settings?token_created=")
+            assert "new_token=" not in token_location and "dk_" not in token_location
+            token_page = client.get(token_location)
+            assert token_page.status_code == 200
+            token_match = re.search(r"<code>(dk_[^<]+)</code>", token_page.text)
+            assert token_match, "Ny API-token ska visas en gång efter skapande."
+            ui_token = html.unescape(token_match.group(1))
+            assert db.authenticate_token(ui_token), "Skapad UI-token ska fungera som bearer token."
+            replayed_token_page = client.get(token_location)
+            assert ui_token not in replayed_token_page.text, "API-token ska inte visas igen via samma flash-länk."
+
             provider_forms = [
                 {
                     "ai_provider": "openai",

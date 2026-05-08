@@ -60,6 +60,7 @@ Okända format blockeras. Format som kan arkiveras men inte texttolkas får stat
 ## LAN API
 
 Skapa en API-token under `Settings`. Använd den som bearer token.
+Den nya token visas en gång efter skapande och skickas inte i redirect-URL:en.
 
 Lista dokument:
 

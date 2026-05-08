@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import secrets
+import time
 from pathlib import Path
+from threading import Lock
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
@@ -21,6 +24,30 @@ app = FastAPI(title="dokumenteraren")
 app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET, same_site="lax", https_only=SECURE_COOKIES)
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
+API_TOKEN_FLASH_TTL_SECONDS = 300
+_api_token_flash: dict[str, tuple[str, float]] = {}
+_api_token_flash_lock = Lock()
+
+
+def store_api_token_flash(token: str) -> str:
+    now = time.monotonic()
+    flash_id = secrets.token_urlsafe(16)
+    with _api_token_flash_lock:
+        expired = [flash_id for flash_id, (_, expires_at) in _api_token_flash.items() if expires_at <= now]
+        for expired_id in expired:
+            _api_token_flash.pop(expired_id, None)
+        _api_token_flash[flash_id] = (token, now + API_TOKEN_FLASH_TTL_SECONDS)
+    return flash_id
+
+
+def pop_api_token_flash(flash_id: str) -> str:
+    if not flash_id:
+        return ""
+    with _api_token_flash_lock:
+        token, expires_at = _api_token_flash.pop(flash_id, ("", 0.0))
+    if expires_at <= time.monotonic():
+        return ""
+    return token
 
 
 def insecure_transport_warning(request: Request) -> str:
@@ -270,11 +297,12 @@ async def chat_ask(
 
 
 @app.get("/settings", response_class=HTMLResponse)
-def settings_page(request: Request, message: str = "", error: str = "", new_token: str = ""):
+def settings_page(request: Request, message: str = "", error: str = "", token_created: str = ""):
     guard = admin_guard(request)
     if guard:
         return guard
     settings = db.get_settings()
+    new_token = pop_api_token_flash(token_created)
     return render(
         request,
         "settings.html",
@@ -347,7 +375,8 @@ def create_token(request: Request, token_name: str = Form("LAN API"), csrf_token
     if guard:
         return guard
     token = db.create_api_token(session_user(request)["id"], token_name)
-    return RedirectResponse(f"/settings?new_token={token}", status_code=303)
+    flash_id = store_api_token_flash(token)
+    return RedirectResponse(f"/settings?token_created={flash_id}", status_code=303)
 
 
 @app.post("/settings/test-mail")
