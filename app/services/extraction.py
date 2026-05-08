@@ -17,6 +17,7 @@ import yaml
 from docx import Document as DocxDocument
 from odf import teletype
 from odf.opendocument import load as odf_load
+from odf.text import P as OdfParagraph
 from openpyxl import load_workbook
 from PIL import Image
 from pdf2image import convert_from_path
@@ -216,6 +217,12 @@ def extract_odf(path: Path, metadata: dict[str, Any]) -> ExtractionResult:
     doc = odf_load(str(path))
     metadata["odf_mimetype"] = getattr(doc, "mimetype", "")
     text = teletype.extractText(doc.text) if getattr(doc, "text", None) else ""
+    if not text.strip():
+        text = "\n".join(
+            part
+            for part in (teletype.extractText(paragraph) for paragraph in doc.getElementsByType(OdfParagraph))
+            if part.strip()
+        )
     return ExtractionResult(compact(text), metadata, "indexed" if text.strip() else "archived_only")
 
 
