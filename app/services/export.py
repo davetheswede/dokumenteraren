@@ -6,6 +6,7 @@ import zipfile
 from pathlib import Path
 
 from ..config import EXPORT_DIR
+from ..security import safe_filename
 from .documents import document_to_dict, get_document, search_documents
 
 
@@ -53,7 +54,7 @@ def create_zip(document_ids: list[int]) -> Path:
             manifest.append(info)
             original = Path(row["storage_path"])
             if original.exists():
-                archive.write(original, f"original/{row['id']}_{row['original_filename']}")
+                archive.write(original, f"original/{row['id']}_{safe_filename(row['original_filename'])}")
             archive.writestr(f"metadata/{row['id']}.json", json.dumps(info, ensure_ascii=False, indent=2))
             archive.writestr(f"text/{row['id']}.md", row["extracted_text"] or "")
         archive.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))

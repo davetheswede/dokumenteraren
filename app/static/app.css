@@ -256,8 +256,13 @@ label {
   padding: 20px;
 }
 
+.table-panel {
+  overflow-x: auto;
+}
+
 table {
   width: 100%;
+  min-width: 720px;
   border-collapse: collapse;
 }
 

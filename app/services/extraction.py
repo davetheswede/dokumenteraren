@@ -19,6 +19,7 @@ from odf import teletype
 from odf.opendocument import load as odf_load
 from openpyxl import load_workbook
 from PIL import Image
+from pdf2image import convert_from_path
 from pypdf import PdfReader
 from pptx import Presentation
 from striprtf.striprtf import rtf_to_text
@@ -154,7 +155,24 @@ def extract_pdf(path: Path, metadata: dict[str, Any]) -> ExtractionResult:
     text = "\n".join(page.extract_text() or "" for page in reader.pages)
     if text.strip():
         return ExtractionResult(compact(text), metadata, "indexed")
+    ocr_text = ocr_pdf(path, metadata)
+    if ocr_text.strip():
+        return ExtractionResult(compact(ocr_text), metadata, "indexed")
     return ExtractionResult("", metadata, "archived_only")
+
+
+def ocr_pdf(path: Path, metadata: dict[str, Any]) -> str:
+    if not shutil.which("tesseract") or not shutil.which("pdftoppm"):
+        metadata["pdf_ocr"] = "missing_tesseract_or_poppler"
+        return ""
+    try:
+        images = convert_from_path(str(path), dpi=200, first_page=1, last_page=20)
+    except Exception as exc:
+        metadata["pdf_ocr_error"] = exc.__class__.__name__
+        return ""
+    parts = [ocr_image(image) for image in images]
+    metadata["pdf_ocr_pages"] = len(images)
+    return "\n".join(parts)
 
 
 def extract_docx(path: Path, metadata: dict[str, Any]) -> ExtractionResult:

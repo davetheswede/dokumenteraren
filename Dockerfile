@@ -12,6 +12,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         curl \
         libreoffice \
+        poppler-utils \
         tesseract-ocr \
         tesseract-ocr-swe \
         tesseract-ocr-eng \

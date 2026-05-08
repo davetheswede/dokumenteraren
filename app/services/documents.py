@@ -15,8 +15,8 @@ from .extraction import extract_document
 
 
 async def save_upload(file: UploadFile, user_id: int, template_id: str | None, tags: str | None) -> int:
-    original_name = file.filename or "document"
-    safe_name = safe_filename(original_name)
+    submitted_name = file.filename or "document"
+    safe_name = safe_filename(submitted_name)
     extension = safe_name.rsplit(".", 1)[-1].lower() if "." in safe_name else ""
     if extension not in ALLOWED_EXTENSIONS:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Filtypen är inte tillåten.")
@@ -32,12 +32,12 @@ async def save_upload(file: UploadFile, user_id: int, template_id: str | None, t
     storage_path = UPLOAD_DIR / stored_name
     storage_path.write_bytes(content)
 
-    extraction = extract_document(storage_path, extension, original_name)
+    extraction = extract_document(storage_path, extension, safe_name)
     text_path = DERIVED_DIR / f"{storage_path.stem}.txt"
     text_path.write_text(extraction.text, encoding="utf-8")
 
-    title = Path(original_name).stem[:200] or safe_name
-    mime_type = file.content_type or mimetypes.guess_type(original_name)[0] or "application/octet-stream"
+    title = Path(safe_name).stem[:200] or safe_name
+    mime_type = file.content_type or mimetypes.guess_type(safe_name)[0] or "application/octet-stream"
     metadata_json = json.dumps(extraction.metadata, ensure_ascii=False, sort_keys=True)
 
     with db.connect() as conn:
@@ -51,7 +51,7 @@ async def save_upload(file: UploadFile, user_id: int, template_id: str | None, t
             """,
             (
                 title,
-                original_name,
+                safe_name,
                 stored_name,
                 str(storage_path),
                 str(text_path),
