@@ -30,7 +30,7 @@ Appen kräver lösenordsbyte innan arkivet kan användas.
 - `import_failed/` med krypterad quarantine för misslyckade importer
 - `keys/` med installationsnyckel när `APP_MASTER_KEY` inte sätts via env
 
-Arkiverade dokument, extraherade texter, exportartefakter, originalfilnamn, titlar, taggar och extraherad metadata krypteras med per-dokumentnycklar. Dokumentnycklar wrapas av appens installationsnyckel och kopplas till användaren via nyckelmetadata. Om `APP_MASTER_KEY` eller `DOKUMENTERAREN_MASTER_KEY` inte är satt genererar appen `/data/keys/install.key`; den måste följa med vid återställning.
+Arkiverade dokument, extraherade texter, exportartefakter, originalfilnamn, titlar, taggar och extraherad metadata krypteras med per-dokumentnycklar. Dokumentnycklar wrapas med ägarens användarnyckel, och användarnyckeln skyddas av appens installationsnyckel. Om `APP_MASTER_KEY` eller `DOKUMENTERAREN_MASTER_KEY` inte är satt genererar appen `/data/keys/install.key`; den måste följa med vid återställning.
 
 Delade Postgres/MariaDB/Valkey-resurser används inte i första versionen. SQLite + krypterade artefakter under `/data` uppfyller backupkravet enklare och håller dokument och metadata i samma backupmål.
 

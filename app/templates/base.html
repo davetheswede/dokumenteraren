@@ -26,6 +26,9 @@
       {% endif %}
     </header>
     <main class="shell">
+      {% if transport_warning %}
+      <div class="alert error">{{ transport_warning }}</div>
+      {% endif %}
       {% block content %}{% endblock %}
     </main>
   </body>

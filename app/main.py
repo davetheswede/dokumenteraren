@@ -23,6 +23,18 @@ app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
 
 
+def insecure_transport_warning(request: Request) -> str:
+    forwarded_proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+    host = request.url.hostname or ""
+    if forwarded_proto == "https" or host in {"localhost", "127.0.0.1", "::1"}:
+        return ""
+    return "Direkt HTTP utanför localhost upptäckt. Använd HTTPS/TLS-proxy för LAN-domänen innan känsliga dokument hanteras."
+
+
+def insecure_transport_warning_header(request: Request) -> str:
+    return "Direct HTTP outside localhost detected. Use HTTPS/TLS proxy for LAN document access." if insecure_transport_warning(request) else ""
+
+
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
     response = await call_next(request)
@@ -32,6 +44,9 @@ async def security_headers(request: Request, call_next):
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
     if request.headers.get("x-forwarded-proto", request.url.scheme) == "https":
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    warning = insecure_transport_warning_header(request)
+    if warning:
+        response.headers["X-Dokumenteraren-Transport-Warning"] = warning
     return response
 
 
@@ -56,6 +71,7 @@ def render(request: Request, template: str, context: dict | None = None, status_
             "ai_status": ai.public_ai_status(settings),
             "smtp_configured": mail.smtp_configured(),
             "import_events": db.list_import_events(8),
+            "transport_warning": insecure_transport_warning(request),
         }
     )
     return templates.TemplateResponse(template, context, status_code=status_code)

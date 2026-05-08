@@ -228,7 +228,10 @@ def get_user(user_id: int) -> sqlite3.Row | None:
 def update_password(user_id: int, password: str) -> None:
     with connect() as conn:
         row = conn.execute("SELECT user_key_wrapped FROM users WHERE id = ?", (user_id,)).fetchone()
-        wrapped_key = row["user_key_wrapped"] if row and row["user_key_wrapped"] else wrap_key(crypto.random_key())
+        if row and row["user_key_wrapped"]:
+            wrapped_key = wrap_key(unwrap_key(row["user_key_wrapped"]))
+        else:
+            wrapped_key = wrap_key(crypto.random_key())
         conn.execute(
             "UPDATE users SET password_hash = ?, must_change_password = 0, user_key_wrapped = ? WHERE id = ?",
             (pwd_context.hash(password), wrapped_key, user_id),
@@ -321,22 +324,45 @@ def unwrap_key(wrapped_key: str) -> bytes:
     return crypto.decrypt_bytes(wrapped_key.encode("ascii"))
 
 
+def user_key_for(conn: sqlite3.Connection, user_id: int) -> bytes:
+    row = conn.execute("SELECT user_key_wrapped FROM users WHERE id = ?", (user_id,)).fetchone()
+    if row and row["user_key_wrapped"]:
+        return unwrap_key(row["user_key_wrapped"])
+    key = crypto.random_key()
+    conn.execute("UPDATE users SET user_key_wrapped = ? WHERE id = ?", (wrap_key(key), user_id))
+    return key
+
+
 def set_document_key(conn: sqlite3.Connection, document_id: int, owner_user_id: int, key: bytes) -> None:
+    user_key = user_key_for(conn, owner_user_id)
     conn.execute(
         """
         INSERT OR REPLACE INTO document_keys (document_id, owner_user_id, wrapped_key, created_at)
         VALUES (?, ?, ?, ?)
         """,
-        (document_id, owner_user_id, wrap_key(key), utc_now()),
+        (document_id, owner_user_id, crypto.encrypt_bytes(key, user_key).decode("ascii"), utc_now()),
     )
 
 
 def get_document_key(document_id: int) -> bytes | None:
     with connect() as conn:
-        row = conn.execute("SELECT wrapped_key FROM document_keys WHERE document_id = ?", (document_id,)).fetchone()
+        row = conn.execute(
+            """
+            SELECT k.wrapped_key, k.owner_user_id, u.user_key_wrapped
+            FROM document_keys k
+            JOIN users u ON u.id = k.owner_user_id
+            WHERE k.document_id = ?
+            """,
+            (document_id,),
+        ).fetchone()
     if not row:
         return None
-    return unwrap_key(row["wrapped_key"])
+    try:
+        user_key = unwrap_key(row["user_key_wrapped"])
+        return crypto.decrypt_bytes(row["wrapped_key"].encode("ascii"), user_key)
+    except Exception:
+        # Compatibility for documents created before per-user key wrapping.
+        return unwrap_key(row["wrapped_key"])
 
 
 def record_import_event(filename: str, status: str, message: str, document_id: int | None = None, sha256: str | None = None) -> None:
