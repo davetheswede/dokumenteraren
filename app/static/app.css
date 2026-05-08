@@ -254,9 +254,11 @@ label {
 .side-panel,
 .text-panel {
   padding: 20px;
+  min-width: 0;
 }
 
-.table-panel {
+.table-panel,
+.work-panel {
   overflow-x: auto;
 }
 
@@ -264,6 +266,10 @@ table {
   width: 100%;
   min-width: 720px;
   border-collapse: collapse;
+}
+
+.work-panel table {
+  min-width: 100%;
 }
 
 th,
@@ -344,7 +350,7 @@ td small {
 
 .template-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
   gap: 12px;
   margin-top: 22px;
 }
@@ -354,6 +360,7 @@ td small {
   border-radius: 6px;
   padding: 14px;
   background: #fffef9;
+  min-width: 0;
 }
 
 .template-grid h3,
@@ -361,6 +368,14 @@ td small {
 .work-panel h2,
 .text-panel h2 {
   margin-top: 0;
+  overflow-wrap: break-word;
+  word-break: normal;
+  hyphens: auto;
+}
+
+.template-grid h3 {
+  font-size: 1.14rem;
+  line-height: 1.1;
 }
 
 .template-grid p {
