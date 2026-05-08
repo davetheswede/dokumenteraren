@@ -33,6 +33,7 @@ from odf.table import Table, TableCell, TableRow  # noqa: E402
 from odf.text import P  # noqa: E402
 from openpyxl import Workbook  # noqa: E402
 from PIL import Image  # noqa: E402
+from pptx import Presentation  # noqa: E402
 
 from app import db  # noqa: E402
 from app.main import app  # noqa: E402
@@ -95,6 +96,16 @@ def make_xlsx(text: str) -> bytes:
     return buffer.getvalue()
 
 
+def make_pptx(text: str) -> bytes:
+    buffer = io.BytesIO()
+    presentation = Presentation()
+    slide = presentation.slides.add_slide(presentation.slide_layouts[6])
+    text_box = slide.shapes.add_textbox(0, 0, 5_000_000, 1_000_000)
+    text_box.text = text
+    presentation.save(buffer)
+    return buffer.getvalue()
+
+
 def make_odt(text: str) -> bytes:
     buffer = io.BytesIO()
     doc = OpenDocumentText()
@@ -117,6 +128,17 @@ def make_ods(text: str) -> bytes:
     return buffer.getvalue()
 
 
+def make_flat_odf(text: str) -> bytes:
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<office:document
+  xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
+  xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"
+  office:mimetype="application/vnd.oasis.opendocument.text">
+  <office:body><office:text><text:p>{text}</text:p></office:text></office:body>
+</office:document>
+""".encode("utf-8")
+
+
 def make_png() -> bytes:
     buffer = io.BytesIO()
     Image.new("RGB", (24, 16), color=(80, 120, 160)).save(buffer, format="PNG")
@@ -128,9 +150,13 @@ SAMPLES: list[tuple[str, bytes, str, bool]] = [
     ("markdown-token.md", b"# Rubrik\nunikmarkdown beta\n", "unikmarkdown", True),
     ("forsakring.pdf", make_pdf("unikpdf krock villkor"), "unikpdf", True),
     ("word.docx", make_docx("unikdocx avtal"), "unikdocx", True),
+    ("macro-word.docm", make_docx("unikdocm avtal"), "unikdocm", True),
     ("sheet.xlsx", make_xlsx("unikxlsx kvitto"), "unikxlsx", True),
+    ("macro-sheet.xlsm", make_xlsx("unikxlsm kvitto"), "unikxlsm", True),
+    ("presentation.pptx", make_pptx("unikpptx villkor"), "unikpptx", True),
     ("open.odt", make_odt("unikodt journal"), "unikodt", True),
     ("open.ods", make_ods("unikods kalkyl"), "unikods", True),
+    ("flat.fodt", make_flat_odf("unikfodt anteckning"), "unikfodt", True),
     ("rich.rtf", b"{\\rtf1\\ansi unikrtf garanti}", "unikrtf", True),
     ("data.csv", b"kolumn\nunikcsv\n", "unikcsv", True),
     ("data.json", b'{"nyckel":"unikjson"}', "unikjson", True),

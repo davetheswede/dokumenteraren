@@ -7,6 +7,7 @@ import mimetypes
 import shutil
 import subprocess
 import tempfile
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from email import policy
 from html.parser import HTMLParser
@@ -24,6 +25,14 @@ from pdf2image import convert_from_path
 from pypdf import PdfReader
 from pptx import Presentation
 from striprtf.striprtf import rtf_to_text
+
+
+DOCX_EXTENSIONS = {"docx", "docm", "dotx", "dotm"}
+XLSX_EXTENSIONS = {"xlsx", "xlsm", "xltx", "xltm"}
+PPTX_EXTENSIONS = {"pptx", "pptm", "potx", "potm", "ppsx", "ppsm"}
+ODF_EXTENSIONS = {"odt", "ods", "odp", "ott", "ots", "otp"}
+FLAT_ODF_EXTENSIONS = {"fodt", "fods", "fodp"}
+LEGACY_OFFICE_EXTENSIONS = {"doc", "xls", "ppt", "dot", "xlt", "pot"}
 
 
 @dataclass
@@ -70,17 +79,19 @@ def extract_document(path: Path, extension: str, original_filename: str) -> Extr
             return extract_eml(path, metadata)
         if extension == "pdf":
             return extract_pdf(path, metadata)
-        if extension == "docx":
+        if extension in DOCX_EXTENSIONS:
             return extract_docx(path, metadata)
-        if extension == "xlsx":
+        if extension in XLSX_EXTENSIONS:
             return extract_xlsx(path, metadata)
-        if extension == "pptx":
+        if extension in PPTX_EXTENSIONS:
             return extract_pptx(path, metadata)
-        if extension in {"odt", "ods", "odp", "ott", "ots", "otp"}:
+        if extension in ODF_EXTENSIONS:
             return extract_odf(path, metadata)
+        if extension in FLAT_ODF_EXTENSIONS:
+            return extract_flat_odf(path, metadata)
         if extension in {"jpg", "jpeg", "png", "webp", "tif", "tiff", "bmp", "gif", "heic"}:
             return extract_image(path, metadata)
-        if extension in {"doc", "xls", "ppt"}:
+        if extension in LEGACY_OFFICE_EXTENSIONS:
             return extract_legacy_office(path, metadata)
     except Exception as exc:
         metadata["extraction_error"] = exc.__class__.__name__
@@ -223,6 +234,25 @@ def extract_odf(path: Path, metadata: dict[str, Any]) -> ExtractionResult:
             for part in (teletype.extractText(paragraph) for paragraph in doc.getElementsByType(OdfParagraph))
             if part.strip()
         )
+    return ExtractionResult(compact(text), metadata, "indexed" if text.strip() else "archived_only")
+
+
+def extract_flat_odf(path: Path, metadata: dict[str, Any]) -> ExtractionResult:
+    root = ET.fromstring(path.read_text(encoding="utf-8", errors="replace"))
+    metadata["odf_mimetype"] = root.attrib.get(
+        "{urn:oasis:names:tc:opendocument:xmlns:office:1.0}mimetype",
+        "",
+    )
+    parts: list[str] = []
+    for element in root.iter():
+        local_name = element.tag.rsplit("}", 1)[-1]
+        if local_name in {"h", "p"}:
+            text = "".join(element.itertext()).strip()
+            if text:
+                parts.append(text)
+    if not parts:
+        parts = [part.strip() for part in root.itertext() if part.strip()]
+    text = "\n".join(parts)
     return ExtractionResult(compact(text), metadata, "indexed" if text.strip() else "archived_only")
 
 

@@ -36,8 +36,8 @@ Tillåtna format:
 
 - Text/data: `txt`, `md`, `rtf`, `csv`, `tsv`, `json`, `xml`, `yaml`, `yml`, `ini`, `conf`, `log`
 - PDF: `pdf`
-- Microsoft Office: `docx`, `xlsx`, `pptx`, äldre `doc`, `xls`, `ppt`
-- OpenDocument/LibreOffice/OpenOffice: `odt`, `ods`, `odp`, `ott`, `ots`, `otp`
+- Microsoft Office: `docx`, `docm`, `dotx`, `dotm`, `xlsx`, `xlsm`, `xltx`, `xltm`, `pptx`, `pptm`, `potx`, `potm`, `ppsx`, `ppsm`, äldre `doc`, `xls`, `ppt`, `dot`, `xlt`, `pot`
+- OpenDocument/LibreOffice/OpenOffice: `odt`, `ods`, `odp`, `ott`, `ots`, `otp`, flat XML-formaten `fodt`, `fods`, `fodp`
 - Bilder: `jpg`, `jpeg`, `png`, `webp`, `tif`, `tiff`, `bmp`, `gif`, `heic`
 - E-post/webb: `eml`, `html`, `htm`
 
@@ -119,7 +119,7 @@ Efter build kan kärnflödena verifieras i samma container som driftmiljön:
 docker compose run --rm dokumenteraren python scripts/verify_acceptance.py
 ```
 
-Skriptet kör mot en temporär datakatalog och verifierar auth/lösenordsbyte, API-import, indexering/sök för vanliga format, disabled AI-chat med redaktion, JSON/CSV/ZIP-export och säkra ZIP-filnamn.
+Skriptet kör mot en temporär datakatalog och verifierar auth/lösenordsbyte, API-import, indexering/sök för vanliga format inklusive Office macro/template-varianter och flat OpenDocument, disabled AI-chat med redaktion, JSON/CSV/ZIP-export och säkra ZIP-filnamn.
 
 ## Driftanteckningar
 
