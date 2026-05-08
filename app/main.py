@@ -61,6 +61,7 @@ def healthz():
 
 
 @app.get("/", response_class=HTMLResponse)
+@app.get("/documents", response_class=HTMLResponse)
 def index(request: Request, q: str = "", template_id: str = "", status: str = "", tag: str = ""):
     guard = page_guard(request)
     if guard:
@@ -71,6 +72,16 @@ def index(request: Request, q: str = "", template_id: str = "", status: str = ""
         "archive.html",
         {"documents": rows, "q": q, "template_id": template_id, "status": status, "tag": tag},
     )
+
+
+def admin_guard(request: Request):
+    guard = page_guard(request)
+    if guard:
+        return guard
+    user = session_user(request)
+    if not user or user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin krävs.")
+    return None
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -234,7 +245,7 @@ async def chat_ask(
 
 @app.get("/settings", response_class=HTMLResponse)
 def settings_page(request: Request, message: str = "", error: str = "", new_token: str = ""):
-    guard = page_guard(request)
+    guard = admin_guard(request)
     if guard:
         return guard
     settings = db.get_settings()
@@ -266,7 +277,7 @@ def save_ai_settings(
     csrf_token: str = Form(...),
 ):
     verify_csrf(request, csrf_token)
-    guard = page_guard(request)
+    guard = admin_guard(request)
     if guard:
         return guard
     if ai_provider not in {"disabled", "openai", "claude", "ollama"}:
@@ -294,7 +305,7 @@ def save_ai_settings(
 @app.post("/settings/ai/test")
 async def test_ai_settings(request: Request, csrf_token: str = Form(...)):
     verify_csrf(request, csrf_token)
-    guard = page_guard(request)
+    guard = admin_guard(request)
     if guard:
         return guard
     ok, message = await ai.test_provider()
@@ -306,7 +317,7 @@ async def test_ai_settings(request: Request, csrf_token: str = Form(...)):
 @app.post("/settings/api-token")
 def create_token(request: Request, token_name: str = Form("LAN API"), csrf_token: str = Form(...)):
     verify_csrf(request, csrf_token)
-    guard = page_guard(request)
+    guard = admin_guard(request)
     if guard:
         return guard
     token = db.create_api_token(session_user(request)["id"], token_name)
@@ -316,7 +327,7 @@ def create_token(request: Request, token_name: str = Form("LAN API"), csrf_token
 @app.post("/settings/test-mail")
 def test_mail(request: Request, to_addr: str = Form(...), csrf_token: str = Form(...)):
     verify_csrf(request, csrf_token)
-    guard = page_guard(request)
+    guard = admin_guard(request)
     if guard:
         return guard
     try:

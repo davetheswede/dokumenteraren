@@ -17,7 +17,7 @@
         <a href="/">Arkiv</a>
         <a href="/upload">Ladda upp</a>
         <a href="/chat">Prata</a>
-        <a href="/settings">Settings</a>
+        {% if user["role"] == "admin" %}<a href="/settings">Settings</a>{% endif %}
       </nav>
       <form method="post" action="/logout" class="logout">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
