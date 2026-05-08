@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="sv">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}dokumenteraren{% endblock %}</title>
+    <link rel="stylesheet" href="/static/app.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/">
+        <span class="brand-mark">D</span>
+        <span>dokumenteraren</span>
+      </a>
+      {% if user %}
+      <nav class="nav">
+        <a href="/">Arkiv</a>
+        <a href="/upload">Ladda upp</a>
+        <a href="/chat">Prata</a>
+        <a href="/settings">Settings</a>
+      </nav>
+      <form method="post" action="/logout" class="logout">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button class="icon-button" title="Logga ut">Ut</button>
+      </form>
+      {% endif %}
+    </header>
+    <main class="shell">
+      {% block content %}{% endblock %}
+    </main>
+  </body>
+</html>

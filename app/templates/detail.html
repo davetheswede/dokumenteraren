@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block content %}
+<header class="topline">
+  <div>
+    <p class="eyebrow">Dokument</p>
+    <h1>{{ doc["title"] }}</h1>
+  </div>
+  <a class="button" href="/documents/{{ doc['id'] }}/download">Ladda ner original</a>
+</header>
+
+<section class="detail-grid">
+  <div class="panel">
+    <h2>Metadata</h2>
+    <dl class="meta">
+      <dt>Filnamn</dt><dd>{{ doc["original_filename"] }}</dd>
+      <dt>Mall</dt><dd>{{ template_name(doc["template_key"]) }}</dd>
+      <dt>Taggar</dt><dd>{{ doc["tags"] or "-" }}</dd>
+      <dt>Format</dt><dd>.{{ doc["extension"] }} / {{ doc["mime_type"] }}</dd>
+      <dt>Status</dt><dd>{{ doc["extraction_status"] }}</dd>
+      <dt>SHA-256</dt><dd class="hash">{{ doc["sha256"] }}</dd>
+    </dl>
+    <pre class="metadata">{{ metadata }}</pre>
+  </div>
+  <div class="panel">
+    <h2>Extraherad text</h2>
+    {% if text %}<pre class="doc-text">{{ text }}</pre>{% else %}<div class="empty">Ingen text kunde extraheras. Originalfilen är ändå arkiverad.</div>{% endif %}
+  </div>
+</section>
+{% endblock %}

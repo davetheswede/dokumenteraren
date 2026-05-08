@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}{{ document.title }} · dokumenteraren{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <p class="eyebrow">{{ document.extension }} · {{ document.extraction_status }}</p>
+    <h1>{{ document.title }}</h1>
+  </div>
+  <div class="actions">
+    <a class="button" href="/documents/{{ document.id }}/download">Original</a>
+    <a class="button" href="/export/zip?ids={{ document.id }}">ZIP</a>
+  </div>
+</section>
+<section class="detail-grid">
+  <aside class="side-panel">
+    <h2>Metadata</h2>
+    <dl>
+      <dt>Fil</dt><dd>{{ document.original_filename }}</dd>
+      <dt>SHA-256</dt><dd class="break">{{ document.sha256 }}</dd>
+      <dt>Storlek</dt><dd>{{ document.size_bytes }} bytes</dd>
+      <dt>MIME</dt><dd>{{ document.mime_type }}</dd>
+      <dt>Mall</dt><dd>{{ template_by_id.get(document.template_id, {}).get("name", "Ingen") }}</dd>
+      <dt>Taggar</dt><dd>{{ document.tags or "-" }}</dd>
+    </dl>
+    <h2>Extraherat</h2>
+    <pre class="metadata">{{ metadata | tojson(indent=2) }}</pre>
+  </aside>
+  <article class="text-panel">
+    <h2>Indexerat textutdrag</h2>
+    {% if document.extracted_text %}
+      <pre>{{ document.extracted_text }}</pre>
+    {% else %}
+      <div class="empty">Ingen text kunde extraheras. Originalfilen är ändå arkiverad och ingår i backup/export.</div>
+    {% endif %}
+  </article>
+</section>
+{% endblock %}

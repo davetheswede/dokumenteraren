@@ -1,0 +1,8 @@
+.git
+.al
+.beads
+data
+visual-review
+__pycache__
+*.pyc
+.env.snok

@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Upload · dokumenteraren{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <p class="eyebrow">Import</p>
+    <h1>Ladda upp dokument</h1>
+  </div>
+</section>
+<section class="work-panel">
+  <form method="post" action="/upload" enctype="multipart/form-data" class="form-grid">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>Fil <input type="file" name="file" required></label>
+    <label>Dokumentmall
+      <select name="template_id">
+        <option value="">Ingen mall</option>
+        {% for item in templates_catalog %}
+          <option value="{{ item.id }}">{{ item.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label class="wide">Taggar <input name="tags" placeholder="försäkring, bil, 2026"></label>
+    <button class="primary">Arkivera och indexera</button>
+  </form>
+  <div class="template-grid">
+    {% for item in templates_catalog %}
+    <article>
+      <h3>{{ item.name }}</h3>
+      <p>{{ item.description }}</p>
+      <small>{{ item.keywords | join(", ") }}</small>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}Settings · dokumenteraren{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <p class="eyebrow">Drift</p>
+    <h1>Settings</h1>
+  </div>
+</section>
+{% if message %}<div class="alert success">{{ message }}</div>{% endif %}
+{% if error %}<div class="alert error">{{ error }}</div>{% endif %}
+{% if new_token %}<div class="alert token">Ny API-token: <code>{{ new_token }}</code></div>{% endif %}
+
+<section class="settings-grid">
+  <article class="work-panel">
+    <h2>AI-provider</h2>
+    <form method="post" action="/settings/ai" class="form-grid">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>Provider
+        <select name="ai_provider">
+          <option value="disabled" {% if settings.ai_provider == "disabled" %}selected{% endif %}>Disabled</option>
+          <option value="openai" {% if settings.ai_provider == "openai" %}selected{% endif %}>OpenAI</option>
+          <option value="claude" {% if settings.ai_provider == "claude" %}selected{% endif %}>Claude</option>
+          <option value="ollama" {% if settings.ai_provider == "ollama" %}selected{% endif %}>Ollama</option>
+        </select>
+      </label>
+      <label>OpenAI API key <input type="password" name="ai_openai_api_key" placeholder="{% if settings.ai_openai_api_key %}sparad{% else %}tom{% endif %}"></label>
+      <label>OpenAI modell <input name="ai_openai_model" value="{{ settings.ai_openai_model }}"></label>
+      <label>OpenAI base URL <input name="ai_openai_base_url" value="{{ settings.ai_openai_base_url }}"></label>
+      <label>Claude API key <input type="password" name="ai_claude_api_key" placeholder="{% if settings.ai_claude_api_key %}sparad{% else %}tom{% endif %}"></label>
+      <label>Claude modell <input name="ai_claude_model" value="{{ settings.ai_claude_model }}"></label>
+      <label>Ollama base URL <input name="ai_ollama_base_url" value="{{ settings.ai_ollama_base_url }}"></label>
+      <label>Ollama modell <input name="ai_ollama_model" value="{{ settings.ai_ollama_model }}"></label>
+      <label>Timeout sekunder <input name="ai_timeout_seconds" value="{{ settings.ai_timeout_seconds }}"></label>
+      <button class="primary">Spara AI-settings</button>
+    </form>
+    <form method="post" action="/settings/ai/test" class="inline-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button>Testa och aktivera provider</button>
+    </form>
+  </article>
+
+  <article class="work-panel">
+    <h2>LAN API</h2>
+    <form method="post" action="/settings/api-token" class="inline-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input name="token_name" value="LAN API">
+      <button>Skapa token</button>
+    </form>
+    <table>
+      <thead><tr><th>Namn</th><th>Skapad</th><th>Senast använd</th></tr></thead>
+      <tbody>
+        {% for token in api_tokens %}
+        <tr><td>{{ token.name }}</td><td>{{ token.created_at[:10] }}</td><td>{{ token.last_used_at or "-" }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </article>
+
+  <article class="work-panel">
+    <h2>SMTP2GO</h2>
+    <p class="muted">Status: {% if smtp_configured %}konfigurerat{% else %}saknar env{% endif %}</p>
+    <form method="post" action="/settings/test-mail" class="inline-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input name="to_addr" type="email" placeholder="mottagare@example.com" required>
+      <button>Skicka testmail</button>
+    </form>
+    <form method="post" action="/export/mail" class="inline-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input name="to_addr" type="email" placeholder="mottagare@example.com" required>
+      <input name="ids" placeholder="1,2,3 eller tomt för alla">
+      <button>Maila ZIP-export</button>
+    </form>
+  </article>
+</section>
+{% endblock %}

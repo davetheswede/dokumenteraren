@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block content %}
+<header class="topline">
+  <div>
+    <p class="eyebrow">Privat dokumentarkiv</p>
+    <h1>Arkiv</h1>
+  </div>
+  <div class="actions">
+    <a class="button" href="/exports/documents.json?q={{ q }}">JSON</a>
+    <a class="button" href="/exports/documents.csv?q={{ q }}">CSV</a>
+  </div>
+</header>
+
+{% if message %}<p class="alert ok">{{ message }}</p>{% endif %}
+
+<section class="workgrid">
+  <div class="panel upload-panel">
+    <h2>Ladda upp</h2>
+    <form method="post" action="/documents" enctype="multipart/form-data" class="stack">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label>Fil<input type="file" name="file" required></label>
+      <label>Dokumentmall
+        <select name="template_key">
+          <option value="">Ingen mall</option>
+          {% for t in templates_catalog %}<option value="{{ t[0] }}">{{ t[1] }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Taggar<input name="tags" placeholder="försäkring, bil, 2026"></label>
+      <button class="primary" type="submit">Arkivera</button>
+    </form>
+  </div>
+
+  <div class="panel list-panel">
+    <form method="get" action="/documents" class="filters">
+      <input name="q" value="{{ q }}" placeholder="Sök i text, metadata och taggar">
+      <select name="template">
+        <option value="">Alla mallar</option>
+        {% for t in templates_catalog %}<option value="{{ t[0] }}" {% if template==t[0] %}selected{% endif %}>{{ t[1] }}</option>{% endfor %}
+      </select>
+      <select name="status">
+        <option value="">Alla statusar</option>
+        <option value="indexed" {% if status=="indexed" %}selected{% endif %}>Indexerad</option>
+        <option value="archived_only" {% if status=="archived_only" %}selected{% endif %}>Endast arkiverad</option>
+      </select>
+      <input name="ext" value="{{ ext }}" placeholder="pdf, docx, odt">
+      <button type="submit">Filtrera</button>
+    </form>
+
+    <form method="post" action="/exports/zip">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <div class="table">
+        <div class="row head"><span></span><span>Namn</span><span>Mall</span><span>Format</span><span>Status</span><span>Datum</span></div>
+        {% for doc in documents %}
+        <label class="row">
+          <input type="checkbox" name="document_ids" value="{{ doc['id'] }}">
+          <span><a href="/documents/{{ doc['id'] }}">{{ doc["title"] }}</a><small>{{ doc["original_filename"] }}</small></span>
+          <span>{{ template_name(doc["template_key"]) }}</span>
+          <span>.{{ doc["extension"] }}</span>
+          <span class="pill {{ doc['extraction_status'] }}">{{ doc["extraction_status"] }}</span>
+          <span>{{ doc["created_at"][:10] }}</span>
+        </label>
+        {% else %}
+        <div class="empty">Inga dokument matchar filtren.</div>
+        {% endfor %}
+      </div>
+      <button class="button export" type="submit">ZIP-export av valda</button>
+    </form>
+  </div>
+</section>
+{% endblock %}
