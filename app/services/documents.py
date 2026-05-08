@@ -43,7 +43,7 @@ def save_document_bytes(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Filen är tom.")
 
     digest = hashlib.sha256(content).hexdigest()
-    stored_name = f"{uuid.uuid4().hex}_{safe_name}.enc"
+    stored_name = f"{uuid.uuid4().hex}.blob.enc"
     storage_path = UPLOAD_DIR / stored_name
     document_key = crypto.random_key()
 
@@ -72,8 +72,8 @@ def save_document_bytes(
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                title,
-                safe_name,
+                crypto.encrypt_text(title, document_key),
+                crypto.encrypt_text(safe_name, document_key),
                 stored_name,
                 str(storage_path),
                 str(text_path),
@@ -82,7 +82,7 @@ def save_document_bytes(
                 mime_type,
                 extension,
                 template_id or "",
-                tags or "",
+                crypto.encrypt_text(tags or "", document_key),
                 encrypted_metadata,
                 encrypted_text,
                 extraction.status,
@@ -92,7 +92,7 @@ def save_document_bytes(
         )
         document_id = int(cursor.lastrowid)
         db.set_document_key(conn, document_id, user_id, document_key)
-        db.upsert_document_fts(conn, document_id, title, tags or "", metadata_json, extraction.text)
+        db.upsert_document_fts(conn, document_id, "", "", "", "")
     return document_id
 
 
@@ -116,9 +116,6 @@ def search_documents(q: str = "", template_id: str = "", status: str = "", tag: 
     if status:
         where.append("d.extraction_status = ?")
         params.append(status)
-    if tag:
-        where.append("d.tags LIKE ?")
-        params.append(f"%{tag}%")
     if where:
         sql += " WHERE " + " AND ".join(where)
     sql += " ORDER BY d.created_at DESC LIMIT 250"
@@ -144,6 +141,9 @@ def search_documents(q: str = "", template_id: str = "", status: str = "", tag: 
                 for term in terms
             )
         ]
+    if tag:
+        tag_query = tag.lower()
+        rows = [row for row in rows if tag_query in (row["tags"] or "").lower()]
     return rows
 
 
@@ -168,6 +168,9 @@ def decrypt_document_row(row) -> dict[str, object]:
     document = dict(row)
     key = db.get_document_key(int(document["id"]))
     if key:
+        document["title"] = crypto.decrypt_text(document["title"] or "", key)
+        document["original_filename"] = crypto.decrypt_text(document["original_filename"] or "", key)
+        document["tags"] = crypto.decrypt_text(document["tags"] or "", key)
         document["metadata_json"] = crypto.decrypt_text(document["metadata_json"] or "{}", key)
         document["extracted_text"] = crypto.decrypt_text(document["extracted_text"] or "", key)
     return document

@@ -342,6 +342,8 @@ def main() -> None:
 
             import_dir = Path(runtime_dir.name) / "import"
             import_dir.mkdir(exist_ok=True)
+            db.init_db()
+            assert import_dir.stat().st_mode & 0o002, "Importkatalogen ska vara skrivbar från hosten."
             imported_file = import_dir / "slukad-import.txt"
             imported_file.write_bytes(b"unikimport hemlig landing zone")
             importer.process_import_once()

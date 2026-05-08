@@ -80,3 +80,7 @@ ALLOWED_EXTENSIONS = {
 def ensure_data_dirs() -> None:
     for path in (DATA_DIR, UPLOAD_DIR, DERIVED_DIR, EXPORT_DIR, IMPORT_DIR, IMPORT_FAILED_DIR, KEYS_DIR, INDEX_DIR):
         path.mkdir(parents=True, exist_ok=True)
+    try:
+        IMPORT_DIR.chmod(0o777)
+    except OSError:
+        pass

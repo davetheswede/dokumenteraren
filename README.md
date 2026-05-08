@@ -30,7 +30,7 @@ Appen kräver lösenordsbyte innan arkivet kan användas.
 - `import_failed/` med krypterad quarantine för misslyckade importer
 - `keys/` med installationsnyckel när `APP_MASTER_KEY` inte sätts via env
 
-Arkiverade dokument och extraherade texter krypteras med per-dokumentnycklar. Dokumentnycklar wrapas av appens installationsnyckel och kopplas till användaren via nyckelmetadata. Om `APP_MASTER_KEY` eller `DOKUMENTERAREN_MASTER_KEY` inte är satt genererar appen `/data/keys/install.key`; den måste följa med vid återställning.
+Arkiverade dokument, extraherade texter, exportartefakter, originalfilnamn, titlar, taggar och extraherad metadata krypteras med per-dokumentnycklar. Dokumentnycklar wrapas av appens installationsnyckel och kopplas till användaren via nyckelmetadata. Om `APP_MASTER_KEY` eller `DOKUMENTERAREN_MASTER_KEY` inte är satt genererar appen `/data/keys/install.key`; den måste följa med vid återställning.
 
 Delade Postgres/MariaDB/Valkey-resurser används inte i första versionen. SQLite + krypterade artefakter under `/data` uppfyller backupkravet enklare och håller dokument och metadata i samma backupmål.
 
@@ -39,6 +39,8 @@ Delade Postgres/MariaDB/Valkey-resurser används inte i första versionen. SQLit
 Lägg filer i `./data/import`. Appen scannar katalogen vid start och därefter periodiskt. En fil importeras när storlek/mtime är stabil över två scan eller när en `.ready`-markör finns.
 
 Lyckad import validerar formatet, hashar filen, extraherar metadata/text, skriver krypterade artefakter till arkivet och tar bort plaintext-filen från `import/`. Otillåtna eller trasiga filer flyttas till krypterad quarantine under `import_failed/` och syns i importstatus.
+
+Vid startup sätter appen importkatalogen skrivbar för hosten så filer kan droppas in i bind-mounten även när containern har skapat katalogen först.
 
 Schemalagd backup bör undvika `./data/import` eller hålla den tom, eftersom filer där är okrypterade tills appen har hunnit sluka dem.
 
