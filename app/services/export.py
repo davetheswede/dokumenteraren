@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import csv
+import io
 import json
 import re
 import zipfile
 from pathlib import Path
 
+from .. import crypto
 from ..config import EXPORT_DIR
-from .documents import document_to_dict, get_document, search_documents
+from .documents import document_to_dict, get_document, read_original_bytes, search_documents
 
 
 ZIP_SAFE_SEGMENT_RE = re.compile(r"[^A-Za-z0-9._-]+")
@@ -56,22 +58,33 @@ def safe_zip_member(prefix: str, filename: str, document_id: int) -> str:
     return f"{safe_prefix}/{document_id}_{leaf}"
 
 
-def create_zip(document_ids: list[int]) -> Path:
+def selected_rows(document_ids: list[int]):
     if not document_ids:
-        rows = search_documents()
-    else:
-        rows = [row for row in (get_document(doc_id) for doc_id in document_ids) if row]
-    EXPORT_DIR.mkdir(parents=True, exist_ok=True)
-    path = EXPORT_DIR / "dokumenteraren_export.zip"
-    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        return search_documents()
+    return [row for row in (get_document(doc_id) for doc_id in document_ids) if row]
+
+
+def create_zip_bytes(document_ids: list[int]) -> bytes:
+    rows = selected_rows(document_ids)
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         manifest = []
         for row in rows:
             info = document_to_dict(row)
             manifest.append(info)
-            original = Path(row["storage_path"])
-            if original.exists():
-                archive.write(original, safe_zip_member("original", row["original_filename"], row["id"]))
+            archive.writestr(
+                safe_zip_member("original", row["original_filename"], row["id"]),
+                read_original_bytes(row),
+            )
             archive.writestr(f"metadata/{row['id']}.json", json.dumps(info, ensure_ascii=False, indent=2))
             archive.writestr(f"text/{row['id']}.md", row["extracted_text"] or "")
         archive.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
+    return buffer.getvalue()
+
+
+def create_zip(document_ids: list[int]) -> Path:
+    """Persist an encrypted export artifact for audit/backup, never plaintext."""
+    EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+    path = EXPORT_DIR / "dokumenteraren_export.zip.enc"
+    path.write_bytes(crypto.encrypt_bytes(create_zip_bytes(document_ids)))
     return path

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -11,13 +12,13 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from . import db
 from .catalog import DOCUMENT_TEMPLATES, TEMPLATE_BY_ID
-from .config import BASE_DIR, SESSION_SECRET
+from .config import BASE_DIR, SECURE_COOKIES, SESSION_SECRET
 from .security import get_csrf_token, page_guard, redact_text, require_api_user, session_user, verify_csrf
-from .services import ai, export, mail
-from .services.documents import document_to_dict, get_document, save_upload, search_documents
+from .services import ai, export, importer, mail
+from .services.documents import document_to_dict, get_document, read_original_bytes, save_upload, search_documents
 
 app = FastAPI(title="dokumenteraren")
-app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET, same_site="lax", https_only=False)
+app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET, same_site="lax", https_only=SECURE_COOKIES)
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
 
@@ -29,12 +30,16 @@ async def security_headers(request: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "same-origin"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    if request.headers.get("x-forwarded-proto", request.url.scheme) == "https":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     return response
 
 
 @app.on_event("startup")
-def startup() -> None:
+async def startup() -> None:
     db.init_db()
+    importer.process_import_once()
+    asyncio.create_task(importer.import_loop())
 
 
 def render(request: Request, template: str, context: dict | None = None, status_code: int = 200) -> HTMLResponse:
@@ -50,6 +55,7 @@ def render(request: Request, template: str, context: dict | None = None, status_
             "template_by_id": TEMPLATE_BY_ID,
             "ai_status": ai.public_ai_status(settings),
             "smtp_configured": mail.smtp_configured(),
+            "import_events": db.list_import_events(8),
         }
     )
     return templates.TemplateResponse(template, context, status_code=status_code)
@@ -184,7 +190,11 @@ def download_document(request: Request, document_id: int):
     row = get_document(document_id)
     if not row:
         raise HTTPException(status_code=404)
-    return FileResponse(row["storage_path"], filename=row["original_filename"], media_type=row["mime_type"])
+    return Response(
+        read_original_bytes(row),
+        media_type=row["mime_type"],
+        headers={"Content-Disposition": f'attachment; filename="{row["original_filename"]}"'},
+    )
 
 
 @app.get("/chat", response_class=HTMLResponse)
@@ -359,8 +369,12 @@ def export_zip(request: Request, ids: str = ""):
     if guard:
         return guard
     document_ids = [int(part) for part in ids.split(",") if part.strip().isdigit()]
-    path = export.create_zip(document_ids)
-    return FileResponse(path, filename=path.name, media_type="application/zip")
+    export.create_zip(document_ids)
+    return Response(
+        export.create_zip_bytes(document_ids),
+        media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="dokumenteraren_export.zip"'},
+    )
 
 
 @app.post("/export/mail")
@@ -371,8 +385,13 @@ def export_mail(request: Request, to_addr: str = Form(...), ids: str = Form(""),
         return guard
     try:
         document_ids = [int(part) for part in ids.split(",") if part.strip().isdigit()]
-        path = export.create_zip(document_ids)
-        mail.send_mail(to_addr, "Export från dokumenteraren", "Bifogat finns vald export.", attachment=path)
+        export.create_zip(document_ids)
+        mail.send_mail(
+            to_addr,
+            "Export från dokumenteraren",
+            "Bifogat finns vald export.",
+            attachment_bytes=export.create_zip_bytes(document_ids),
+        )
     except Exception as exc:
         return RedirectResponse(f"/settings?error=Exportmail misslyckades: {exc.__class__.__name__}", status_code=303)
     return RedirectResponse("/settings?message=Export skickad via mail.", status_code=303)
@@ -381,6 +400,11 @@ def export_mail(request: Request, to_addr: str = Form(...), ids: str = Form(""),
 @app.get("/api/v1/templates")
 def api_templates(user=Depends(require_api_user)):
     return DOCUMENT_TEMPLATES
+
+
+@app.get("/api/v1/imports")
+def api_imports(user=Depends(require_api_user)):
+    return [dict(row) for row in db.list_import_events()]
 
 
 @app.get("/api/v1/documents")

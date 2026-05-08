@@ -16,7 +16,14 @@ def smtp_configured() -> bool:
     return all(os.getenv(key) for key in required)
 
 
-def send_mail(to_addr: str, subject: str, text: str, attachment: Path | None = None) -> None:
+def send_mail(
+    to_addr: str,
+    subject: str,
+    text: str,
+    attachment: Path | None = None,
+    attachment_bytes: bytes | None = None,
+    attachment_name: str = "dokumenteraren_export.zip",
+) -> None:
     if not smtp_configured():
         raise MailConfigurationError("SMTP är inte konfigurerat i env.")
 
@@ -32,7 +39,9 @@ def send_mail(to_addr: str, subject: str, text: str, attachment: Path | None = N
     message["To"] = to_addr
     message["Subject"] = subject
     message.set_content(text)
-    if attachment:
+    if attachment_bytes is not None:
+        message.add_attachment(attachment_bytes, maintype="application", subtype="zip", filename=attachment_name)
+    elif attachment:
         data = attachment.read_bytes()
         message.add_attachment(data, maintype="application", subtype="octet-stream", filename=attachment.name)
 

@@ -36,8 +36,10 @@ from PIL import Image  # noqa: E402
 from pptx import Presentation  # noqa: E402
 
 from app import db  # noqa: E402
+from app.crypto import ENC_PREFIX  # noqa: E402
 from app.main import app  # noqa: E402
 from app.security import redact_text  # noqa: E402
+from app.services import importer  # noqa: E402
 from app.services.export import safe_zip_member  # noqa: E402
 
 
@@ -173,6 +175,16 @@ def assert_zip_member_safe(name: str) -> None:
     normalized = posixpath.normpath(name)
     assert normalized == name, f"ZIP-namn normaliserar bort segment: {name}"
     assert ".." not in Path(name).parts, f"ZIP-namn innehåller parentsegment: {name}"
+
+
+def assert_data_dir_has_no_plaintext(tokens: list[bytes]) -> None:
+    data_root = Path(runtime_dir.name)
+    for path in data_root.rglob("*"):
+        if not path.is_file():
+            continue
+        data = path.read_bytes()
+        for token in tokens:
+            assert token not in data, f"{token!r} finns i klartext på disk i {path}"
 
 
 def main() -> None:
@@ -327,6 +339,44 @@ def main() -> None:
                 assert settings["ai_enabled"] == "false" and settings["ai_last_test_ok"] == "false"
                 masked_page = client.get("/settings")
                 assert "acceptance-secret" not in masked_page.text
+
+            import_dir = Path(runtime_dir.name) / "import"
+            import_dir.mkdir(exist_ok=True)
+            imported_file = import_dir / "slukad-import.txt"
+            imported_file.write_bytes(b"unikimport hemlig landing zone")
+            importer.process_import_once()
+            import_results = importer.process_import_once()
+            assert any(item["status"] == "imported" for item in import_results)
+            assert not imported_file.exists(), "Lyckad import ska tas bort från importkatalogen."
+            imported_search = client.get(
+                "/api/v1/documents",
+                headers={"Authorization": f"Bearer {token}"},
+                params={"q": "unikimport"},
+            )
+            assert imported_search.status_code == 200
+            assert any(row["original_filename"] == "slukad-import.txt" for row in imported_search.json())
+
+            blocked_import = import_dir / "blockerad.exe"
+            blocked_import.write_bytes(b"unikblockerad plaintext ska inte ligga kvar")
+            importer.process_import_once()
+            failed_results = importer.process_import_once()
+            assert any(item["status"] == "failed" for item in failed_results)
+            assert not blocked_import.exists(), "Misslyckad import ska inte ligga kvar i importkatalogen."
+            failed_files = list((Path(runtime_dir.name) / "import_failed").glob("*.enc"))
+            assert failed_files and failed_files[-1].read_bytes().startswith(ENC_PREFIX.encode("ascii"))
+
+            export_artifact = Path(runtime_dir.name) / "exports" / "dokumenteraren_export.zip.enc"
+            assert export_artifact.exists() and export_artifact.read_bytes().startswith(ENC_PREFIX.encode("ascii"))
+
+            assert_data_dir_has_no_plaintext(
+                [
+                    b"uniktext alfa",
+                    b"unikdocx avtal",
+                    b"unikxlsx kvitto",
+                    b"unikimport hemlig",
+                    b"unikblockerad plaintext",
+                ]
+            )
 
         print(f"ACCEPTANCE_OK data_dir={runtime_dir.name}")
     finally:

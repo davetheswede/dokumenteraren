@@ -9,6 +9,7 @@ services:
       DATA_DIR: /data
       APP_PORT: 12006
       SESSION_SECRET: ${SESSION_SECRET:-change-me-in-env}
+      SECURE_COOKIES: ${SECURE_COOKIES:-false}
       MAIL_FROM: ${MAIL_FROM:-noreply@ath0.se}
     ports:
       - "12006:12006"

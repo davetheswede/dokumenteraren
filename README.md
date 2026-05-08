@@ -1,6 +1,6 @@
 # dokumenteraren
 
-Första fungerande version av ett privat dokumentarkiv för lokal drift. Appen körs som container på port `12006` och sparar dokument, SQLite-databas, extraherad text och exporter under en bindad datakatalog.
+Första fungerande version av ett privat dokumentarkiv för lokal drift. Appen körs som container på port `12006` och sparar dokument, metadata, extraherad text, importer och exporter under en bindad datakatalog.
 
 ## Start
 
@@ -24,11 +24,23 @@ Appen kräver lösenordsbyte innan arkivet kan användas.
 `docker-compose.yml` binder `./data:/data`. Säkerhetskopiera katalogen `./data` för att få med:
 
 - `app.db`
-- `uploads/` med originaldokument
-- `derived/` med extraherad text
-- `exports/` med skapade exportfiler
+- `uploads/` med krypterade originaldokument
+- `derived/` med krypterad extraherad text
+- `exports/` med krypterade exportartefakter
+- `import_failed/` med krypterad quarantine för misslyckade importer
+- `keys/` med installationsnyckel när `APP_MASTER_KEY` inte sätts via env
 
-Delade Postgres/MariaDB/Valkey-resurser används inte i första versionen. SQLite + `/data` uppfyller backupkravet enklare och håller dokument och metadata i samma backupmål.
+Arkiverade dokument och extraherade texter krypteras med per-dokumentnycklar. Dokumentnycklar wrapas av appens installationsnyckel och kopplas till användaren via nyckelmetadata. Om `APP_MASTER_KEY` eller `DOKUMENTERAREN_MASTER_KEY` inte är satt genererar appen `/data/keys/install.key`; den måste följa med vid återställning.
+
+Delade Postgres/MariaDB/Valkey-resurser används inte i första versionen. SQLite + krypterade artefakter under `/data` uppfyller backupkravet enklare och håller dokument och metadata i samma backupmål.
+
+## Importkatalog
+
+Lägg filer i `./data/import`. Appen scannar katalogen vid start och därefter periodiskt. En fil importeras när storlek/mtime är stabil över två scan eller när en `.ready`-markör finns.
+
+Lyckad import validerar formatet, hashar filen, extraherar metadata/text, skriver krypterade artefakter till arkivet och tar bort plaintext-filen från `import/`. Otillåtna eller trasiga filer flyttas till krypterad quarantine under `import_failed/` och syns i importstatus.
+
+Schemalagd backup bör undvika `./data/import` eller hålla den tom, eftersom filer där är okrypterade tills appen har hunnit sluka dem.
 
 ## Formatstöd
 
@@ -67,6 +79,12 @@ Lista mallar:
 
 ```bash
 curl -H "Authorization: Bearer dk_..." http://localhost:12006/api/v1/templates
+```
+
+Importstatus:
+
+```bash
+curl -H "Authorization: Bearer dk_..." http://localhost:12006/api/v1/imports
 ```
 
 ## AI-settings
@@ -111,6 +129,8 @@ Webb-UI:t erbjuder:
 
 ZIP-export innehåller originalfiler, metadata, extraherad text och manifest.
 
+Nedladdningen streamas som vanlig ZIP efter explicit användaråtgärd. Artefakten som sparas under `/data/exports` är krypterad (`.zip.enc`).
+
 ## Acceptansverifiering
 
 Efter build kan kärnflödena verifieras i samma container som driftmiljön:
@@ -119,11 +139,12 @@ Efter build kan kärnflödena verifieras i samma container som driftmiljön:
 docker compose run --rm dokumenteraren python scripts/verify_acceptance.py
 ```
 
-Skriptet kör mot en temporär datakatalog och verifierar auth/lösenordsbyte, API-import, indexering/sök för vanliga format inklusive Office macro/template-varianter och flat OpenDocument, disabled AI-chat med redaktion, JSON/CSV/ZIP-export och säkra ZIP-filnamn.
+Skriptet kör mot en temporär datakatalog och verifierar auth/lösenordsbyte, API-upload, indexering/sök för vanliga format inklusive Office macro/template-varianter och flat OpenDocument, importkatalog, kryptering i vila, disabled AI-chat med redaktion, JSON/CSV/ZIP-export och säkra ZIP-filnamn.
 
 ## Driftanteckningar
 
 - Health endpoint: `GET /healthz`
 - Max uploadstorlek kan sättas med `MAX_UPLOAD_BYTES`, default 50 MB.
 - Sessionsecret bör sättas med `SESSION_SECRET` i env.
-- Appen är avsedd för privat/lokalt nät och kan senare läggas bakom lokal proxy på `dokumenteraren.theshire.lan`.
+- Appen är avsedd för privat/lokalt nät och kan läggas bakom lokal HTTPS-proxy på `dokumenteraren.theshire.lan`.
+- Sätt `SECURE_COOKIES=true` när appen körs bakom HTTPS/TLS-proxy. HSTS-header sätts när inkommande request eller `X-Forwarded-Proto` är `https`.

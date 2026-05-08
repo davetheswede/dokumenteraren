@@ -59,7 +59,17 @@
     <p><strong>{{ ai_status.provider }}</strong> · {% if ai_status.enabled %}aktiv{% else %}inaktiv{% endif %}</p>
     <p class="muted">Data skickas inte till AI förrän provider är vald och anslutningstestet är godkänt.</p>
     <h2>Backup</h2>
-    <p class="muted">All data ligger under containerns <code>/data</code>, bindad till <code>./data</code>.</p>
+    <p class="muted">Krypterad data ligger under <code>/data</code>. Lägg inkommande filer i <code>/data/import</code>; lyckade importer tas bort därifrån.</p>
+    <h2>Import</h2>
+    {% if import_events %}
+      <div class="event-list">
+      {% for event in import_events %}
+        <p><strong>{{ event.status }}</strong> · {{ event.filename }}<br><small>{{ event.created_at[:16] }} · {{ event.message }}</small></p>
+      {% endfor %}
+      </div>
+    {% else %}
+      <p class="muted">Ingen importhistorik än.</p>
+    {% endif %}
   </aside>
 </section>
 {% endblock %}
