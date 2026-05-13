@@ -1,8 +1,12 @@
 .git
 .al
 .beads
+.env
+.env.*
+!.env.example
 data
+import
 visual-review
+.verify-tmp
 __pycache__
 *.pyc
-.env.snok

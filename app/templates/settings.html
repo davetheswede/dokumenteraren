@@ -41,6 +41,44 @@
   </article>
 
   <article class="work-panel">
+    <h2>Mailimport</h2>
+    <p class="muted">Status: {{ settings.mail_import_last_status }}{% if settings.mail_import_last_run_at %} · {{ settings.mail_import_last_run_at[:16] }}{% endif %}</p>
+    <form method="post" action="/settings/mail-import" class="form-grid">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label><input type="checkbox" name="mail_import_enabled" {% if settings.mail_import_enabled == "true" %}checked{% endif %}> Aktivera polling</label>
+      <label>Protokoll
+        <select name="mail_import_protocol">
+          <option value="pop3" {% if settings.mail_import_protocol == "pop3" %}selected{% endif %}>POP3</option>
+          <option value="imap" {% if settings.mail_import_protocol == "imap" %}selected{% endif %}>IMAP</option>
+        </select>
+      </label>
+      <label>Host <input name="mail_import_host" value="{{ settings.mail_import_host }}"></label>
+      <label>Port <input name="mail_import_port" value="{{ settings.mail_import_port }}"></label>
+      <label>Användarnamn <input name="mail_import_username" value="{{ settings.mail_import_username }}"></label>
+      <label>Lösenord <input type="password" name="mail_import_password" placeholder="{% if settings.mail_import_password %}sparad{% else %}tom{% endif %}"></label>
+      <label>IMAP-folder <input name="mail_import_folder" value="{{ settings.mail_import_folder }}"></label>
+      <label>Pollintervall sekunder <input name="mail_import_poll_interval_seconds" value="{{ settings.mail_import_poll_interval_seconds }}"></label>
+      <label>Max mail per poll <input name="mail_import_max_messages" value="{{ settings.mail_import_max_messages }}"></label>
+      <label>Ignorera inline-bilder under bytes <input name="mail_import_min_inline_image_bytes" value="{{ settings.mail_import_min_inline_image_bytes }}"></label>
+      <label class="wide">Standardtaggar <input name="mail_import_default_tags" value="{{ settings.mail_import_default_tags }}"></label>
+      <label><input type="checkbox" name="mail_import_ssl" {% if settings.mail_import_ssl == "true" %}checked{% endif %}> SSL/TLS</label>
+      <label><input type="checkbox" name="mail_import_delete_after_handled" {% if settings.mail_import_delete_after_handled == "true" %}checked{% endif %}> Radera hanterade mail</label>
+      <label><input type="checkbox" name="mail_import_import_eml_without_attachments" {% if settings.mail_import_import_eml_without_attachments == "true" %}checked{% endif %}> Importera mail som EML utan attachments</label>
+      <button class="primary">Spara mailimport</button>
+    </form>
+    <div class="inline-form">
+      <form method="post" action="/settings/mail-import/test" class="inline-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button>Testa anslutning</button>
+      </form>
+      <form method="post" action="/settings/mail-import/poll" class="inline-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button>Kör poll nu</button>
+      </form>
+    </div>
+  </article>
+
+  <article class="work-panel">
     <h2>LAN API</h2>
     <form method="post" action="/settings/api-token" class="inline-form">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">

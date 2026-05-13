@@ -24,7 +24,13 @@
     </label>
     <div class="doc-picker">
       {% for doc in documents %}
-      <label><input type="checkbox" name="document_ids" value="{{ doc.id }}"> {{ doc.title }} <small>{{ doc.extension }} · {{ doc.extraction_status }}</small></label>
+      <label class="doc-choice">
+        <input type="checkbox" name="document_ids" value="{{ doc.id }}">
+        <span>
+          <strong>{{ doc.original_filename }}</strong>
+          <small>{{ template_by_id.get(doc.template_id, {}).get("name", "Ingen mall") }}{% if doc.tags %} · {{ doc.tags }}{% endif %}</small>
+        </span>
+      </label>
       {% endfor %}
     </div>
     <button class="primary">Skicka fråga</button>

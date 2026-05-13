@@ -9,6 +9,10 @@
   <div class="actions">
     <a class="button" href="/documents/{{ document.id }}/download">Original</a>
     <a class="button" href="/export/zip?ids={{ document.id }}">ZIP</a>
+    <form method="post" action="/documents/{{ document.id }}/delete" onsubmit="return confirm('Radera dokumentet permanent?');">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button class="danger">Radera</button>
+    </form>
   </div>
 </section>
 {% if message %}<div class="alert success">{{ message }}</div>{% endif %}
@@ -18,18 +22,43 @@
     <dl>
       <dt>Fil</dt><dd>{{ document.original_filename }}</dd>
       <dt>SHA-256</dt><dd class="break">{{ document.sha256 }}</dd>
+      <dt>MD5</dt><dd class="break">{{ document.md5_plain or "-" }}</dd>
+      <dt>Krypterad SHA-256</dt><dd class="break">{{ document.sha256_encrypted or "-" }}</dd>
+      <dt>Krypterad MD5</dt><dd class="break">{{ document.md5_encrypted or "-" }}</dd>
+      <dt>Verifiering</dt>
+      <dd>
+        <span class="pill {% if checksum_status.ok %}indexed{% else %}failed{% endif %}">
+          {{ checksum_status.message }}
+        </span>
+      </dd>
       <dt>Storlek</dt><dd>{{ document.size_bytes }} bytes</dd>
       <dt>MIME</dt><dd>{{ document.mime_type }}</dd>
       <dt>Mall</dt><dd>{{ template_by_id.get(document.template_id, {}).get("name", "Ingen") }}</dd>
       <dt>Taggar</dt><dd>{{ document.tags or "-" }}</dd>
     </dl>
-    <form method="post" action="/documents/{{ document.id }}/tags" class="tag-form">
+    <form method="post" action="/documents/{{ document.id }}/classification" class="tag-form">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>Redigera mall
+        <select name="template_id">
+          <option value="">Ingen mall</option>
+          {% for item in templates_catalog | sort(attribute="name") %}
+            <option value="{{ item.id }}" {% if document.template_id == item.id %}selected{% endif %}>{{ item.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
       <label>Redigera taggar
         <input name="tags" value="{{ document.tags }}" placeholder="försäkring, bil, 2026">
       </label>
-      <button class="primary">Spara taggar</button>
+      <button class="primary">Spara mall och taggar</button>
     </form>
+    <div class="danger-zone">
+      <h2>Radera</h2>
+      <p class="muted">Tar bort dokumentet och de krypterade filerna permanent.</p>
+      <form method="post" action="/documents/{{ document.id }}/delete" onsubmit="return confirm('Radera dokumentet permanent?');">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button class="danger">Radera dokument</button>
+      </form>
+    </div>
     <h2>Extraherat</h2>
     <pre class="metadata">{{ metadata | tojson(indent=2) }}</pre>
   </aside>

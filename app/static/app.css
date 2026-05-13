@@ -169,6 +169,12 @@ button,
   border-color: var(--accent);
 }
 
+.danger {
+  background: var(--danger);
+  color: #fffaf0;
+  border-color: var(--danger);
+}
+
 .link-button {
   display: inline-flex;
   align-items: center;
@@ -191,6 +197,10 @@ textarea {
   color: var(--ink);
   padding: 10px 12px;
   font: inherit;
+}
+
+input[type="checkbox"] {
+  width: auto;
 }
 
 textarea {
@@ -217,6 +227,20 @@ label {
   border-top: 1px solid var(--line);
 }
 
+.danger-zone {
+  display: grid;
+  gap: 10px;
+  margin: 22px 0;
+  padding-top: 18px;
+  border-top: 1px solid #efb4bd;
+}
+
+.danger-zone h2,
+.danger-zone p,
+.danger-zone form {
+  margin: 0;
+}
+
 .form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -226,6 +250,36 @@ label {
 .form-grid .wide,
 .form-grid button {
   grid-column: 1 / -1;
+}
+
+.file-template-list {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fffef9;
+}
+
+.file-template-list p {
+  margin: 0;
+}
+
+.file-template-row {
+  grid-template-columns: minmax(0, 1fr) 86px minmax(180px, 260px);
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--ink);
+}
+
+.file-template-row span,
+.file-template-row small {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .split,
@@ -301,6 +355,27 @@ td small {
   word-break: break-word;
 }
 
+.doc-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 5px;
+}
+
+.doc-tags span {
+  display: inline-flex;
+  max-width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fffef9;
+  color: var(--muted);
+  padding: 2px 7px;
+  font-size: 0.72rem;
+  font-weight: 750;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
 .pill,
 .status-card {
   display: inline-flex;
@@ -321,6 +396,12 @@ td small {
 .status-card.warn {
   background: #fff0d8;
   color: var(--warn);
+}
+
+.failed,
+.status-card.error {
+  background: #fff0f2;
+  color: var(--danger);
 }
 
 .alert {
@@ -445,9 +526,35 @@ pre {
 .doc-picker label,
 .check {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   color: var(--ink);
+}
+
+.doc-choice {
+  padding: 8px;
+  border-radius: 6px;
+}
+
+.doc-choice:hover {
+  background: #fffef9;
+}
+
+.doc-choice span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.doc-choice strong,
+.doc-choice small {
+  overflow-wrap: anywhere;
+}
+
+.doc-choice small {
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.35;
 }
 
 .doc-picker input,

@@ -9,6 +9,7 @@ import re
 import sys
 import tempfile
 import zipfile
+from email.message import EmailMessage
 from pathlib import Path
 
 
@@ -19,6 +20,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 def configure_isolated_runtime() -> tempfile.TemporaryDirectory[str]:
     data_dir = tempfile.TemporaryDirectory(prefix="dokumenteraren-acceptance-")
     os.environ["DATA_DIR"] = data_dir.name
+    os.environ["IMPORT_DIR"] = str(Path(data_dir.name).with_name(f"{Path(data_dir.name).name}-import"))
     os.environ["SESSION_SECRET"] = "acceptance-test-secret"
     os.environ["MAX_UPLOAD_BYTES"] = str(1_000_000)
     return data_dir
@@ -36,10 +38,11 @@ from PIL import Image  # noqa: E402
 from pptx import Presentation  # noqa: E402
 
 from app import db  # noqa: E402
+from app.catalog import DOCUMENT_TEMPLATES  # noqa: E402
 from app.crypto import ENC_PREFIX  # noqa: E402
 from app.main import app  # noqa: E402
 from app.security import redact_text  # noqa: E402
-from app.services import importer  # noqa: E402
+from app.services import importer, mail_importer  # noqa: E402
 from app.services.export import safe_zip_member  # noqa: E402
 
 
@@ -218,9 +221,42 @@ def main() -> None:
                 follow_redirects=False,
             )
             assert changed.status_code == 303 and changed.headers["location"] == "/"
+            assert len(DOCUMENT_TEMPLATES) >= 77
+            assert any(item["id"] == "health_insurance" and item["name"] == "Sjukförsäkring" for item in DOCUMENT_TEMPLATES)
+            assert any(item["id"] == "dog_insurance" and item["name"] == "Hundförsäkring" for item in DOCUMENT_TEMPLATES)
+            assert any(item["id"] == "securities_account" and item["name"] == "Värdepapperskonto" for item in DOCUMENT_TEMPLATES)
+            assert any(item["id"] == "password_vault_export" and item["name"] == "Lösenord/valvexport" for item in DOCUMENT_TEMPLATES)
+            assert any(item["id"] == "backup_recovery_plan" and item["name"] == "Backup/återställning" for item in DOCUMENT_TEMPLATES)
+            upload_page = client.get("/upload")
+            assert upload_page.status_code == 200
+            assert 'name="files"' in upload_page.text and 'name="template_id"' in upload_page.text
 
             token = db.create_api_token(1, "acceptance")
             uploaded_ids: list[int] = []
+            multi_upload = client.post(
+                "/upload",
+                files=[
+                    ("files", ("multi-kvitto.txt", b"unikmulti kvitto", "text/plain")),
+                    ("files", ("multi-sjuk.txt", b"unikmulti sjukforsakring", "text/plain")),
+                ],
+                data={"csrf_token": csrf(upload_page), "template_id": ["receipt", "health_insurance"], "tags": "multi,acceptance"},
+                follow_redirects=False,
+            )
+            assert multi_upload.status_code == 303 and multi_upload.headers["location"].startswith("/?message=2")
+            archive_after_multi_upload = client.get(multi_upload.headers["location"])
+            assert archive_after_multi_upload.status_code == 200
+            assert '<div class="doc-tags"' in archive_after_multi_upload.text
+            assert "<span>multi</span>" in archive_after_multi_upload.text
+            assert "<span>acceptance</span>" in archive_after_multi_upload.text
+            multi_docs = client.get(
+                "/api/v1/documents",
+                headers={"Authorization": f"Bearer {token}"},
+                params={"tag": "multi"},
+            )
+            assert multi_docs.status_code == 200
+            multi_by_name = {row["original_filename"]: row for row in multi_docs.json()}
+            assert multi_by_name["multi-kvitto.txt"]["template_id"] == "receipt"
+            assert multi_by_name["multi-sjuk.txt"]["template_id"] == "health_insurance"
             for filename, content, token_word, must_index in SAMPLES:
                 response = client.post(
                     "/api/v1/documents",
@@ -253,28 +289,55 @@ def main() -> None:
             )
             assert traversal.status_code == 200
             traversal_payload = traversal.json()
-            uploaded_ids.append(traversal_payload["id"])
             assert traversal_payload["original_filename"] == "konto.txt"
+            delete_page = client.get(f"/documents/{traversal_payload['id']}")
+            assert delete_page.status_code == 200
+            assert f'action="/documents/{traversal_payload["id"]}/delete"' in delete_page.text
+            with db.connect() as conn:
+                delete_row = conn.execute(
+                    "SELECT storage_path, text_path FROM documents WHERE id = ?",
+                    (traversal_payload["id"],),
+                ).fetchone()
+            delete_paths = [Path(delete_row["storage_path"]), Path(delete_row["text_path"])]
+            delete_invalid_csrf = client.post(
+                f"/documents/{traversal_payload['id']}/delete",
+                data={"csrf_token": "fel-token"},
+                follow_redirects=False,
+            )
+            assert delete_invalid_csrf.status_code == 403
+            deleted = client.post(
+                f"/documents/{traversal_payload['id']}/delete",
+                data={"csrf_token": csrf(delete_page)},
+                follow_redirects=False,
+            )
+            assert deleted.status_code == 303 and deleted.headers["location"].startswith("/?message=")
+            assert client.get(f"/documents/{traversal_payload['id']}").status_code == 404
+            after_delete_docs = client.get("/api/v1/documents", headers={"Authorization": f"Bearer {token}"})
+            assert all(row["id"] != traversal_payload["id"] for row in after_delete_docs.json())
+            assert all(not path.exists() for path in delete_paths)
 
             detail_page = client.get(f"/documents/{uploaded_ids[0]}")
             assert detail_page.status_code == 200
-            assert f'action="/documents/{uploaded_ids[0]}/tags"' in detail_page.text
+            assert f'action="/documents/{uploaded_ids[0]}/classification"' in detail_page.text
+            assert "Checksummor verifierade." in detail_page.text
+            assert "Krypterad MD5" in detail_page.text
             invalid_csrf = client.post(
-                f"/documents/{uploaded_ids[0]}/tags",
-                data={"csrf_token": "fel-token", "tags": "redigerad,acceptance"},
+                f"/documents/{uploaded_ids[0]}/classification",
+                data={"csrf_token": "fel-token", "template_id": "health_insurance", "tags": "redigerad,acceptance"},
                 follow_redirects=False,
             )
             assert invalid_csrf.status_code == 403
-            updated_tags = client.post(
-                f"/documents/{uploaded_ids[0]}/tags",
-                data={"csrf_token": csrf(detail_page), "tags": "redigerad,acceptance"},
+            updated_classification = client.post(
+                f"/documents/{uploaded_ids[0]}/classification",
+                data={"csrf_token": csrf(detail_page), "template_id": "health_insurance", "tags": "redigerad,acceptance"},
                 follow_redirects=False,
             )
-            assert updated_tags.status_code == 303
-            assert updated_tags.headers["location"] == f"/documents/{uploaded_ids[0]}?message=tags-updated"
-            updated_detail = client.get(updated_tags.headers["location"])
+            assert updated_classification.status_code == 303
+            assert updated_classification.headers["location"] == f"/documents/{uploaded_ids[0]}?message=classification-updated"
+            updated_detail = client.get(updated_classification.headers["location"])
             assert updated_detail.status_code == 200
-            assert "Taggar uppdaterade." in updated_detail.text
+            assert "Mall och taggar uppdaterade." in updated_detail.text
+            assert "Sjukförsäkring" in updated_detail.text
             assert 'value="redigerad,acceptance"' in updated_detail.text
             old_tag_search = client.get(
                 "/api/v1/documents",
@@ -294,10 +357,15 @@ def main() -> None:
             assert api_documents.status_code == 200
             edited_api_doc = next(row for row in api_documents.json() if row["id"] == uploaded_ids[0])
             assert edited_api_doc["tags"] == "redigerad,acceptance"
+            assert edited_api_doc["template_id"] == "health_insurance"
+            assert len(edited_api_doc["md5_plain"]) == 32
+            assert len(edited_api_doc["sha256_encrypted"]) == 64
+            assert len(edited_api_doc["md5_encrypted"]) == 32
             metadata_after_tag_edit = client.get("/export/metadata.json")
             assert metadata_after_tag_edit.status_code == 200
             edited_export_doc = next(row for row in metadata_after_tag_edit.json() if row["id"] == uploaded_ids[0])
             assert edited_export_doc["tags"] == "redigerad,acceptance"
+            assert edited_export_doc["template_id"] == "health_insurance"
 
             forbidden = client.post(
                 "/api/v1/documents",
@@ -340,11 +408,11 @@ def main() -> None:
             with zipfile.ZipFile(io.BytesIO(exported.content)) as archive:
                 names = archive.namelist()
                 assert "manifest.json" in names
-                assert any(name.startswith("original/") and name.endswith("konto.txt") for name in names)
+                assert any(name.startswith("original/") and name.endswith("text-token.txt") for name in names)
                 for name in names:
                     assert_zip_member_safe(name)
                 manifest = json.loads(archive.read("manifest.json"))
-                assert any(item["original_filename"] == "konto.txt" for item in manifest)
+                assert any(item["original_filename"] == "text-token.txt" for item in manifest)
 
             assert safe_zip_member("original", "../../..\\CON.txt", 99) == "original/99_CON.txt"
 
@@ -372,13 +440,13 @@ def main() -> None:
             provider_forms = [
                 {
                     "ai_provider": "openai",
-                    "ai_openai_api_key": "sk-acceptance-secret",
+                    "ai_openai_api_key": "test-openai-key",
                     "ai_openai_model": "gpt-test",
                     "ai_openai_base_url": "http://127.0.0.1:9/v1",
                 },
                 {
                     "ai_provider": "claude",
-                    "ai_claude_api_key": "claude-acceptance-secret",
+                    "ai_claude_api_key": "test-claude-key",
                     "ai_claude_model": "claude-test",
                 },
                 {
@@ -399,11 +467,83 @@ def main() -> None:
                 assert settings["ai_provider"] == form["ai_provider"]
                 assert settings["ai_enabled"] == "false" and settings["ai_last_test_ok"] == "false"
                 masked_page = client.get("/settings")
-                assert "acceptance-secret" not in masked_page.text
+                assert "test-openai-key" not in masked_page.text
+                assert "test-claude-key" not in masked_page.text
 
-            import_dir = Path(runtime_dir.name) / "import"
+            mail_settings_page = client.get("/settings")
+            mail_saved = client.post(
+                "/settings/mail-import",
+                data={
+                    "csrf_token": csrf(mail_settings_page),
+                    "mail_import_enabled": "on",
+                    "mail_import_protocol": "imap",
+                    "mail_import_host": "mail.example.test",
+                    "mail_import_port": "993",
+                    "mail_import_ssl": "on",
+                    "mail_import_username": "archive@example.test",
+                    "mail_import_password": "test-mail-password",
+                    "mail_import_folder": "INBOX",
+                    "mail_import_delete_after_handled": "on",
+                    "mail_import_poll_interval_seconds": "120",
+                    "mail_import_max_messages": "5",
+                    "mail_import_min_inline_image_bytes": "10240",
+                    "mail_import_import_eml_without_attachments": "on",
+                    "mail_import_default_tags": "mailimport,acceptance",
+                },
+                follow_redirects=False,
+            )
+            assert mail_saved.status_code == 303
+            mail_settings = db.get_settings()
+            assert mail_settings["mail_import_protocol"] == "imap"
+            assert mail_settings["mail_import_delete_after_handled"] == "true"
+            assert mail_settings["mail_import_password"] == "test-mail-password"
+            masked_mail_settings = client.get("/settings")
+            assert "test-mail-password" not in masked_mail_settings.text
+
+            attachment_mail = EmailMessage()
+            attachment_mail["From"] = "archive@forsakring.example"
+            attachment_mail["To"] = "dokumenteraren@example.test"
+            attachment_mail["Subject"] = "Hundförsäkring veterinär kvitto"
+            attachment_mail.set_content("Se bifogad hundförsäkring.")
+            attachment_mail.add_attachment(
+                b"unikmail hund forsakring veterinarkvitto",
+                maintype="text",
+                subtype="plain",
+                filename="hundforsakring-kvitto.txt",
+            )
+            mail_results = mail_importer.process_message_bytes(attachment_mail.as_bytes(), mail_settings, uid="acceptance-uid-1")
+            assert any(item["status"] == "imported" for item in mail_results)
+            mail_search = client.get(
+                "/api/v1/documents",
+                headers={"Authorization": f"Bearer {token}"},
+                params={"q": "unikmail"},
+            )
+            assert mail_search.status_code == 200
+            mail_doc = next(row for row in mail_search.json() if row["original_filename"] == "hundforsakring-kvitto.txt")
+            assert mail_doc["template_id"] == "dog_insurance"
+            assert "automatiskt sorterad" in mail_doc["tags"]
+            assert "mailimport" in mail_doc["tags"]
+            assert "from:forsakring.example" in mail_doc["tags"]
+
+            no_attachment_mail = EmailMessage()
+            no_attachment_mail["From"] = "ops@example.test"
+            no_attachment_mail["To"] = "dokumenteraren@example.test"
+            no_attachment_mail["Subject"] = "Recovery codes"
+            no_attachment_mail.set_content("unikemlimport backup codes")
+            eml_results = mail_importer.process_message_bytes(no_attachment_mail.as_bytes(), mail_settings, uid="acceptance-uid-2")
+            assert any(item["status"] == "imported" for item in eml_results)
+            eml_search = client.get(
+                "/api/v1/documents",
+                headers={"Authorization": f"Bearer {token}"},
+                params={"q": "unikemlimport"},
+            )
+            assert eml_search.status_code == 200
+            assert any(row["original_filename"].endswith(".eml") for row in eml_search.json())
+
+            import_dir = Path(os.environ["IMPORT_DIR"])
             import_dir.mkdir(exist_ok=True)
             db.init_db()
+            assert not import_dir.is_relative_to(Path(runtime_dir.name)), "Importkatalogen ska ligga utanför DATA_DIR."
             assert import_dir.stat().st_mode & 0o002, "Importkatalogen ska vara skrivbar från hosten."
             imported_file = import_dir / "slukad-import.txt"
             imported_file.write_bytes(b"unikimport hemlig landing zone")

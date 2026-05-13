@@ -17,8 +17,18 @@ from . import db
 from .catalog import DOCUMENT_TEMPLATES, TEMPLATE_BY_ID
 from .config import BASE_DIR, SECURE_COOKIES, SESSION_SECRET
 from .security import get_csrf_token, page_guard, redact_text, require_api_user, session_user, verify_csrf
-from .services import ai, export, importer, mail
-from .services.documents import document_to_dict, get_document, read_original_bytes, save_upload, search_documents, update_document_tags
+from .services import ai, export, importer, mail, mail_importer
+from .services.documents import (
+    delete_document,
+    document_to_dict,
+    get_document,
+    read_original_bytes,
+    save_upload,
+    search_documents,
+    update_document_classification,
+    update_document_tags,
+    verify_document_checksums,
+)
 
 app = FastAPI(title="dokumenteraren")
 app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET, same_site="lax", https_only=SECURE_COOKIES)
@@ -82,6 +92,7 @@ async def startup() -> None:
     db.init_db()
     importer.process_import_once()
     asyncio.create_task(importer.import_loop())
+    asyncio.create_task(mail_importer.import_loop())
 
 
 def render(request: Request, template: str, context: dict | None = None, status_code: int = 200) -> HTMLResponse:
@@ -111,7 +122,7 @@ def healthz():
 
 @app.get("/", response_class=HTMLResponse)
 @app.get("/documents", response_class=HTMLResponse)
-def index(request: Request, q: str = "", template_id: str = "", status: str = "", tag: str = ""):
+def index(request: Request, q: str = "", template_id: str = "", status: str = "", tag: str = "", message: str = ""):
     guard = page_guard(request)
     if guard:
         return guard
@@ -119,7 +130,7 @@ def index(request: Request, q: str = "", template_id: str = "", status: str = ""
     return render(
         request,
         "archive.html",
-        {"documents": rows, "q": q, "template_id": template_id, "status": status, "tag": tag},
+        {"documents": rows, "q": q, "template_id": template_id, "status": status, "tag": tag, "message": message},
     )
 
 
@@ -199,18 +210,33 @@ def upload_page(request: Request):
 @app.post("/upload")
 async def upload_document(
     request: Request,
-    file: UploadFile = File(...),
-    template_id: str = Form(""),
-    tags: str = Form(""),
-    csrf_token: str = Form(...),
 ):
+    form = await request.form()
+    csrf_token = str(form.get("csrf_token") or "")
     verify_csrf(request, csrf_token)
     guard = page_guard(request)
     if guard:
         return guard
     user = session_user(request)
-    document_id = await save_upload(file, user["id"], template_id, tags)
-    return RedirectResponse(f"/documents/{document_id}", status_code=303)
+    uploads = [
+        item
+        for item in [*form.getlist("files"), *form.getlist("file")]
+        if hasattr(item, "filename") and hasattr(item, "read") and getattr(item, "filename", "")
+    ]
+    template_ids = [str(value) for value in form.getlist("template_id")]
+    tags = str(form.get("tags") or "")
+
+    if not uploads:
+        return render(request, "upload.html", {"error": "Välj minst en fil."}, status_code=400)
+
+    document_ids: list[int] = []
+    for index, upload in enumerate(uploads):
+        template_id = template_ids[index] if index < len(template_ids) else (template_ids[0] if template_ids else "")
+        document_ids.append(await save_upload(upload, user["id"], template_id, tags))
+
+    if len(document_ids) == 1:
+        return RedirectResponse(f"/documents/{document_ids[0]}", status_code=303)
+    return RedirectResponse(f"/?message={len(document_ids)} dokument arkiverades.", status_code=303)
 
 
 @app.get("/documents/{document_id}", response_class=HTMLResponse)
@@ -222,12 +248,31 @@ def document_detail(request: Request, document_id: int, message: str = ""):
     if not row:
         raise HTTPException(status_code=404)
     metadata = json.loads(row["metadata_json"] or "{}")
-    messages = {"tags-updated": "Taggar uppdaterade."}
+    messages = {"tags-updated": "Taggar uppdaterade.", "classification-updated": "Mall och taggar uppdaterade."}
     return render(
         request,
         "document_detail.html",
-        {"document": row, "metadata": metadata, "message": messages.get(message, "")},
+        {"document": row, "metadata": metadata, "checksum_status": verify_document_checksums(row), "message": messages.get(message, "")},
     )
+
+
+@app.post("/documents/{document_id}/classification")
+def document_classification_update(
+    request: Request,
+    document_id: int,
+    template_id: str = Form(""),
+    tags: str = Form(""),
+    csrf_token: str = Form(...),
+):
+    verify_csrf(request, csrf_token)
+    guard = page_guard(request)
+    if guard:
+        return guard
+    if template_id and template_id not in TEMPLATE_BY_ID:
+        raise HTTPException(status_code=400, detail="Okänd dokumentmall.")
+    if not update_document_classification(document_id, template_id, tags):
+        raise HTTPException(status_code=404)
+    return RedirectResponse(f"/documents/{document_id}?message=classification-updated", status_code=303)
 
 
 @app.post("/documents/{document_id}/tags")
@@ -239,6 +284,17 @@ def document_tags_update(request: Request, document_id: int, tags: str = Form(""
     if not update_document_tags(document_id, tags):
         raise HTTPException(status_code=404)
     return RedirectResponse(f"/documents/{document_id}?message=tags-updated", status_code=303)
+
+
+@app.post("/documents/{document_id}/delete")
+def document_delete(request: Request, document_id: int, csrf_token: str = Form(...)):
+    verify_csrf(request, csrf_token)
+    guard = page_guard(request)
+    if guard:
+        return guard
+    if not delete_document(document_id):
+        raise HTTPException(status_code=404)
+    return RedirectResponse("/?message=Dokumentet raderades.", status_code=303)
 
 
 @app.get("/documents/{document_id}/download")
@@ -393,6 +449,81 @@ def create_token(request: Request, token_name: str = Form("LAN API"), csrf_token
     token = db.create_api_token(session_user(request)["id"], token_name)
     flash_id = store_api_token_flash(token)
     return RedirectResponse(f"/settings?token_created={flash_id}", status_code=303)
+
+
+@app.post("/settings/mail-import")
+def save_mail_import_settings(
+    request: Request,
+    mail_import_enabled: str | None = Form(default=None),
+    mail_import_protocol: str = Form("pop3"),
+    mail_import_host: str = Form(""),
+    mail_import_port: str = Form(""),
+    mail_import_ssl: str | None = Form(default=None),
+    mail_import_username: str = Form(""),
+    mail_import_password: str = Form(""),
+    mail_import_folder: str = Form("INBOX"),
+    mail_import_delete_after_handled: str | None = Form(default=None),
+    mail_import_poll_interval_seconds: str = Form("300"),
+    mail_import_max_messages: str = Form("10"),
+    mail_import_min_inline_image_bytes: str = Form("10240"),
+    mail_import_import_eml_without_attachments: str | None = Form(default=None),
+    mail_import_default_tags: str = Form("mailimport"),
+    csrf_token: str = Form(...),
+):
+    verify_csrf(request, csrf_token)
+    guard = admin_guard(request)
+    if guard:
+        return guard
+    if mail_import_protocol not in {"pop3", "imap"}:
+        raise HTTPException(status_code=400, detail="Ogiltigt mailprotokoll.")
+    current = db.get_settings()
+    values = {
+        "mail_import_enabled": "true" if mail_import_enabled else "false",
+        "mail_import_protocol": mail_import_protocol,
+        "mail_import_host": mail_import_host.strip(),
+        "mail_import_port": mail_import_port.strip() or ("993" if mail_import_protocol == "imap" else "995"),
+        "mail_import_ssl": "true" if mail_import_ssl else "false",
+        "mail_import_username": mail_import_username.strip(),
+        "mail_import_folder": mail_import_folder.strip() or "INBOX",
+        "mail_import_delete_after_handled": "true" if mail_import_delete_after_handled else "false",
+        "mail_import_poll_interval_seconds": mail_import_poll_interval_seconds.strip() or "300",
+        "mail_import_max_messages": mail_import_max_messages.strip() or "10",
+        "mail_import_min_inline_image_bytes": mail_import_min_inline_image_bytes.strip() or "10240",
+        "mail_import_import_eml_without_attachments": "true" if mail_import_import_eml_without_attachments else "false",
+        "mail_import_default_tags": mail_import_default_tags.strip() or "mailimport",
+    }
+    if mail_import_password:
+        values["mail_import_password"] = mail_import_password
+    elif current.get("mail_import_password"):
+        values["mail_import_password"] = current["mail_import_password"]
+    db.set_settings(values)
+    return RedirectResponse("/settings?message=Mailimport sparad.", status_code=303)
+
+
+@app.post("/settings/mail-import/test")
+def test_mail_import_settings(request: Request, csrf_token: str = Form(...)):
+    verify_csrf(request, csrf_token)
+    guard = admin_guard(request)
+    if guard:
+        return guard
+    try:
+        ok, message = mail_importer.test_connection()
+    except Exception as exc:
+        return RedirectResponse(f"/settings?error=Mailimport test misslyckades: {exc.__class__.__name__}", status_code=303)
+    return RedirectResponse(f"/settings?{'message' if ok else 'error'}={message}", status_code=303)
+
+
+@app.post("/settings/mail-import/poll")
+def poll_mail_import(request: Request, csrf_token: str = Form(...)):
+    verify_csrf(request, csrf_token)
+    guard = admin_guard(request)
+    if guard:
+        return guard
+    try:
+        results = mail_importer.process_mail_import_once(force=True)
+    except Exception as exc:
+        return RedirectResponse(f"/settings?error=Mailimport misslyckades: {exc.__class__.__name__}", status_code=303)
+    return RedirectResponse(f"/settings?message=Mailimport körd: {len(results)} importhändelser.", status_code=303)
 
 
 @app.post("/settings/test-mail")

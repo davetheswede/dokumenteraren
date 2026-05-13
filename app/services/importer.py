@@ -9,7 +9,8 @@ from fastapi import HTTPException
 from .. import crypto, db
 from ..config import IMPORT_DIR, IMPORT_FAILED_DIR
 from ..security import safe_filename
-from .documents import save_document_bytes
+from .classification import auto_classify
+from .documents import existing_document_id_for_content, save_document_bytes
 
 
 _seen: dict[Path, tuple[int, int]] = {}
@@ -50,14 +51,14 @@ def process_import_file(path: Path) -> dict[str, object]:
     content = path.read_bytes()
     digest = hashlib.sha256(content).hexdigest()
     try:
-        with db.connect() as conn:
-            existing = conn.execute("SELECT id FROM documents WHERE sha256 = ?", (digest,)).fetchall()
-        if existing:
+        existing_id = existing_document_id_for_content(content)
+        if existing_id:
             path.unlink(missing_ok=True)
             path.with_name(f"{path.name}.ready").unlink(missing_ok=True)
-            db.record_import_event(original_name, "duplicate", "Dubblett hoppades över.", int(existing[0]["id"]), digest)
-            return {"filename": original_name, "status": "duplicate", "document_id": int(existing[0]["id"])}
-        document_id = save_document_bytes(content, original_name, import_owner_user_id(), "", "import", mime_type=None)
+            db.record_import_event(original_name, "duplicate", "Dubblett hoppades över.", existing_id, digest)
+            return {"filename": original_name, "status": "duplicate", "document_id": existing_id}
+        template_id, tags = auto_classify(original_name, default_tags="import", source_tag="filimport")
+        document_id = save_document_bytes(content, original_name, import_owner_user_id(), template_id, tags, mime_type=None)
     except Exception as exc:
         failed_path = IMPORT_FAILED_DIR / f"{digest[:16]}_{original_name}.enc"
         failed_path.write_bytes(crypto.encrypt_bytes(content))

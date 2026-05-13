@@ -60,6 +60,9 @@ def init_db() -> None:
                 storage_path TEXT NOT NULL,
                 text_path TEXT,
                 sha256 TEXT NOT NULL,
+                md5_plain TEXT,
+                sha256_encrypted TEXT,
+                md5_encrypted TEXT,
                 size_bytes INTEGER NOT NULL,
                 mime_type TEXT NOT NULL,
                 extension TEXT NOT NULL,
@@ -109,6 +112,7 @@ def init_db() -> None:
         seed_admin(conn)
         seed_settings(conn)
         migrate_plaintext_documents(conn)
+        migrate_document_checksums(conn)
 
 
 def migrate_schema(conn: sqlite3.Connection) -> None:
@@ -120,6 +124,13 @@ def migrate_schema(conn: sqlite3.Connection) -> None:
             "UPDATE users SET user_key_wrapped = ? WHERE id = ?",
             (wrap_key(crypto.random_key()), user["id"]),
         )
+    document_columns = {row["name"] for row in conn.execute("PRAGMA table_info(documents)").fetchall()}
+    if "md5_plain" not in document_columns:
+        conn.execute("ALTER TABLE documents ADD COLUMN md5_plain TEXT")
+    if "sha256_encrypted" not in document_columns:
+        conn.execute("ALTER TABLE documents ADD COLUMN sha256_encrypted TEXT")
+    if "md5_encrypted" not in document_columns:
+        conn.execute("ALTER TABLE documents ADD COLUMN md5_encrypted TEXT")
 
 
 def migrate_plaintext_documents(conn: sqlite3.Connection) -> None:
@@ -178,6 +189,41 @@ def migrate_plaintext_documents(conn: sqlite3.Connection) -> None:
     conn.execute("VACUUM")
 
 
+def migrate_document_checksums(conn: sqlite3.Connection) -> None:
+    rows = conn.execute(
+        """
+        SELECT id, storage_path, sha256, md5_plain, sha256_encrypted, md5_encrypted
+        FROM documents
+        WHERE md5_plain IS NULL OR md5_plain = ''
+           OR sha256_encrypted IS NULL OR sha256_encrypted = ''
+           OR md5_encrypted IS NULL OR md5_encrypted = ''
+        """
+    ).fetchall()
+    for row in rows:
+        storage_path = Path(row["storage_path"])
+        if not storage_path.exists():
+            continue
+        encrypted_bytes = storage_path.read_bytes()
+        key = get_document_key(int(row["id"]))
+        try:
+            plain_bytes = crypto.decrypt_bytes(encrypted_bytes, key) if key else encrypted_bytes
+        except Exception:
+            plain_bytes = encrypted_bytes
+        conn.execute(
+            """
+            UPDATE documents
+            SET md5_plain = ?, sha256_encrypted = ?, md5_encrypted = ?
+            WHERE id = ?
+            """,
+            (
+                row["md5_plain"] or hashlib.md5(plain_bytes, usedforsecurity=False).hexdigest(),
+                row["sha256_encrypted"] or hashlib.sha256(encrypted_bytes).hexdigest(),
+                row["md5_encrypted"] or hashlib.md5(encrypted_bytes, usedforsecurity=False).hexdigest(),
+                row["id"],
+            ),
+        )
+
+
 def seed_admin(conn: sqlite3.Connection) -> None:
     existing = conn.execute("SELECT id, user_key_wrapped FROM users WHERE username = ?", ("admin",)).fetchone()
     if existing:
@@ -207,6 +253,22 @@ def seed_settings(conn: sqlite3.Connection) -> None:
         "ai_ollama_base_url": "http://host.docker.internal:11434",
         "ai_ollama_model": "llama3.1",
         "ai_timeout_seconds": "30",
+        "mail_import_enabled": "false",
+        "mail_import_protocol": "pop3",
+        "mail_import_host": "",
+        "mail_import_port": "995",
+        "mail_import_ssl": "true",
+        "mail_import_username": "",
+        "mail_import_password": "",
+        "mail_import_folder": "INBOX",
+        "mail_import_delete_after_handled": "true",
+        "mail_import_poll_interval_seconds": "300",
+        "mail_import_max_messages": "10",
+        "mail_import_min_inline_image_bytes": "10240",
+        "mail_import_import_eml_without_attachments": "true",
+        "mail_import_default_tags": "mailimport",
+        "mail_import_last_status": "Inte körd.",
+        "mail_import_last_run_at": "",
     }
     for key, value in defaults.items():
         conn.execute(

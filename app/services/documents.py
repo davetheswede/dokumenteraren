@@ -24,6 +24,13 @@ async def save_upload(file: UploadFile, user_id: int, template_id: str | None, t
     return save_document_bytes(content, safe_name, user_id, template_id, tags, mime_type=mime_type)
 
 
+def existing_document_id_for_content(content: bytes) -> int | None:
+    digest = hashlib.sha256(content).hexdigest()
+    with db.connect() as conn:
+        row = conn.execute("SELECT id FROM documents WHERE sha256 = ? ORDER BY id LIMIT 1", (digest,)).fetchone()
+    return int(row["id"]) if row else None
+
+
 def save_document_bytes(
     content: bytes,
     submitted_name: str,
@@ -43,6 +50,7 @@ def save_document_bytes(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Filen är tom.")
 
     digest = hashlib.sha256(content).hexdigest()
+    md5_plain = hashlib.md5(content, usedforsecurity=False).hexdigest()
     stored_name = f"{uuid.uuid4().hex}.blob.enc"
     storage_path = UPLOAD_DIR / stored_name
     document_key = crypto.random_key()
@@ -52,7 +60,10 @@ def save_document_bytes(
         plaintext_path.write_bytes(content)
         extraction = extract_document(plaintext_path, extension, safe_name)
 
-    storage_path.write_bytes(crypto.encrypt_bytes(content, document_key))
+    encrypted_content = crypto.encrypt_bytes(content, document_key)
+    storage_path.write_bytes(encrypted_content)
+    sha256_encrypted = hashlib.sha256(encrypted_content).hexdigest()
+    md5_encrypted = hashlib.md5(encrypted_content, usedforsecurity=False).hexdigest()
     text_path = DERIVED_DIR / f"{Path(stored_name).stem}.txt.enc"
     text_path.write_bytes(crypto.encrypt_bytes(extraction.text.encode("utf-8"), document_key))
 
@@ -67,9 +78,9 @@ def save_document_bytes(
             """
             INSERT INTO documents (
                 title, original_filename, stored_filename, storage_path, text_path, sha256, size_bytes,
-                mime_type, extension, template_id, tags, metadata_json, extracted_text, extraction_status,
+                md5_plain, sha256_encrypted, md5_encrypted, mime_type, extension, template_id, tags, metadata_json, extracted_text, extraction_status,
                 uploaded_by, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 crypto.encrypt_text(title, document_key),
@@ -79,6 +90,9 @@ def save_document_bytes(
                 str(text_path),
                 digest,
                 len(content),
+                md5_plain,
+                sha256_encrypted,
+                md5_encrypted,
                 mime_type,
                 extension,
                 template_id or "",
@@ -102,7 +116,25 @@ def get_document(document_id: int):
     return decrypt_document_row(row) if row else None
 
 
-def update_document_tags(document_id: int, tags: str) -> bool:
+def delete_document(document_id: int) -> bool:
+    with db.connect() as conn:
+        row = conn.execute("SELECT storage_path, text_path FROM documents WHERE id = ?", (document_id,)).fetchone()
+        if not row:
+            return False
+        conn.execute("DELETE FROM document_keys WHERE document_id = ?", (document_id,))
+        conn.execute("DELETE FROM documents WHERE id = ?", (document_id,))
+
+    for path_value in (row["storage_path"], row["text_path"]):
+        if not path_value:
+            continue
+        try:
+            Path(path_value).unlink(missing_ok=True)
+        except OSError:
+            pass
+    return True
+
+
+def update_document_classification(document_id: int, template_id: str, tags: str) -> bool:
     key = db.get_document_key(document_id)
     if not key:
         return False
@@ -111,10 +143,52 @@ def update_document_tags(document_id: int, tags: str) -> bool:
         if not row:
             return False
         conn.execute(
-            "UPDATE documents SET tags = ? WHERE id = ?",
-            (crypto.encrypt_text(tags or "", key), document_id),
+            "UPDATE documents SET template_id = ?, tags = ? WHERE id = ?",
+            (template_id or "", crypto.encrypt_text(tags or "", key), document_id),
         )
     return True
+
+
+def update_document_tags(document_id: int, tags: str) -> bool:
+    row = get_document(document_id)
+    if not row:
+        return False
+    return update_document_classification(document_id, str(row["template_id"] or ""), tags)
+
+
+def verify_document_checksums(row) -> dict[str, object]:
+    storage_path = Path(row["storage_path"])
+    result = {
+        "ok": False,
+        "plain_sha256_ok": False,
+        "plain_md5_ok": False,
+        "encrypted_sha256_ok": False,
+        "encrypted_md5_ok": False,
+        "message": "Originalfilen saknas i lagringen.",
+    }
+    if not storage_path.exists():
+        return result
+    encrypted_content = storage_path.read_bytes()
+    key = db.get_document_key(int(row["id"]))
+    try:
+        plain_content = crypto.decrypt_bytes(encrypted_content, key) if key else encrypted_content
+    except Exception:
+        result["message"] = "Krypterad fil kunde inte dekrypteras för verifiering."
+        return result
+    result["plain_sha256_ok"] = hashlib.sha256(plain_content).hexdigest() == row["sha256"]
+    result["plain_md5_ok"] = hashlib.md5(plain_content, usedforsecurity=False).hexdigest() == (row.get("md5_plain") or "")
+    result["encrypted_sha256_ok"] = hashlib.sha256(encrypted_content).hexdigest() == (row.get("sha256_encrypted") or "")
+    result["encrypted_md5_ok"] = hashlib.md5(encrypted_content, usedforsecurity=False).hexdigest() == (row.get("md5_encrypted") or "")
+    result["ok"] = all(
+        [
+            result["plain_sha256_ok"],
+            result["plain_md5_ok"],
+            result["encrypted_sha256_ok"],
+            result["encrypted_md5_ok"],
+        ]
+    )
+    result["message"] = "Checksummor verifierade." if result["ok"] else "Minst en checksum matchar inte lagrad metadata."
+    return result
 
 
 def search_documents(q: str = "", template_id: str = "", status: str = "", tag: str = ""):
@@ -168,6 +242,9 @@ def document_to_dict(row) -> dict[str, object]:
         "title": row["title"],
         "original_filename": row["original_filename"],
         "sha256": row["sha256"],
+        "md5_plain": row.get("md5_plain") or "",
+        "sha256_encrypted": row.get("sha256_encrypted") or "",
+        "md5_encrypted": row.get("md5_encrypted") or "",
         "size_bytes": row["size_bytes"],
         "mime_type": row["mime_type"],
         "extension": row["extension"],

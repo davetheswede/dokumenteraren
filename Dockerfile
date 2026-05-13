@@ -3,6 +3,7 @@ FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     DATA_DIR=/data \
+    IMPORT_DIR=/import \
     APP_HOST=0.0.0.0 \
     APP_PORT=12006
 
@@ -25,7 +26,7 @@ COPY app ./app
 COPY scripts ./scripts
 COPY README.md .
 
-RUN mkdir -p /data/uploads /data/derived /data/exports /data/import /data/import_failed /data/keys /data/indexes
+RUN mkdir -p /data/uploads /data/derived /data/exports /data/import_failed /data/keys /data/indexes /import
 
 EXPOSE 12006
 
