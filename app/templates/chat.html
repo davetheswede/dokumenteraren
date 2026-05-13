@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Prata med dokument · dokumenteraren{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <p class="eyebrow">Prata med dokument(en)</p>
+    <h1>Fråga valda dokument</h1>
+  </div>
+  <div class="status-card {% if ai_status.enabled %}ok{% else %}warn{% endif %}">
+    {{ ai_status.provider }} · {% if ai_status.enabled %}aktiv{% else %}inaktiv{% endif %}
+  </div>
+</section>
+{% if error %}<div class="alert error">{{ error }}</div>{% endif %}
+{% if answer %}<div class="alert success">{{ answer }}</div>{% endif %}
+<section class="chat-grid">
+  <form method="post" action="/chat" class="work-panel">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>Fråga
+      <textarea name="question" rows="5" required>{{ question or "" }}</textarea>
+    </label>
+    <label class="check"><input type="checkbox" name="redact" checked> Redigera känsliga mönster innan AI-anrop</label>
+    <label>Egna ord/fraser att maska
+      <textarea name="custom_redactions" rows="4" placeholder="En rad per ord eller fras"></textarea>
+    </label>
+    <div class="doc-picker">
+      {% for doc in documents %}
+      <label class="doc-choice">
+        <input type="checkbox" name="document_ids" value="{{ doc.id }}">
+        <span>
+          <strong>{{ doc.original_filename }}</strong>
+          <small>{{ template_by_id.get(doc.template_id, {}).get("name", "Ingen mall") }}{% if doc.tags %} · {{ doc.tags }}{% endif %}</small>
+        </span>
+      </label>
+      {% endfor %}
+    </div>
+    <button class="primary">Skicka fråga</button>
+  </form>
+  <aside class="side-panel">
+    <h2>Utdrag som användes</h2>
+    {% if used_context %}
+      <pre>{{ used_context }}</pre>
+    {% else %}
+      <p class="muted">Utdragen visas här efter frågan. Full prompt loggas inte.</p>
+    {% endif %}
+  </aside>
+</section>
+{% endblock %}

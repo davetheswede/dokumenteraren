@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Upload · dokumenteraren{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <p class="eyebrow">Import</p>
+    <h1>Ladda upp dokument</h1>
+  </div>
+</section>
+<section class="work-panel">
+  {% if error %}<div class="alert error">{{ error }}</div>{% endif %}
+  <form method="post" action="/upload" enctype="multipart/form-data" class="form-grid">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label class="wide">Filer <input id="file-input" type="file" name="files" multiple required></label>
+    <div class="wide file-template-list" id="file-template-list">
+      <p class="muted">Välj en eller flera filer. När filer är valda kan du sätta dokumentmall per fil.</p>
+    </div>
+    <label class="wide">Taggar <input name="tags" placeholder="försäkring, bil, 2026"></label>
+    <button class="primary">Arkivera och indexera</button>
+  </form>
+  <div class="template-grid">
+    {% for item in templates_catalog | sort(attribute="name") %}
+    <article>
+      <h3>{{ item.name }}</h3>
+      <p>{{ item.description }}</p>
+      <small>{{ item.keywords | join(", ") }}</small>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+<template id="template-select-template">
+  <select name="template_id">
+    <option value="">Ingen mall</option>
+    {% for item in templates_catalog | sort(attribute="name") %}
+      <option value="{{ item.id }}">{{ item.name }}</option>
+    {% endfor %}
+  </select>
+</template>
+<script>
+  const fileInput = document.getElementById("file-input");
+  const templateList = document.getElementById("file-template-list");
+  const selectTemplate = document.getElementById("template-select-template");
+
+  function renderFileTemplateRows() {
+    const files = Array.from(fileInput.files || []);
+    templateList.replaceChildren();
+    if (!files.length) {
+      const empty = document.createElement("p");
+      empty.className = "muted";
+      empty.textContent = "Välj en eller flera filer. När filer är valda kan du sätta dokumentmall per fil.";
+      templateList.append(empty);
+      return;
+    }
+
+    files.forEach((file, index) => {
+      const row = document.createElement("label");
+      row.className = "file-template-row";
+      const name = document.createElement("span");
+      name.textContent = file.name;
+      const meta = document.createElement("small");
+      meta.textContent = `${Math.ceil(file.size / 1024)} KB`;
+      const select = selectTemplate.content.firstElementChild.cloneNode(true);
+      select.setAttribute("aria-label", `Dokumentmall för ${file.name}`);
+      row.append(name, meta, select);
+      templateList.append(row);
+    });
+  }
+
+  fileInput?.addEventListener("change", renderFileTemplateRows);
+</script>
+{% endblock %}

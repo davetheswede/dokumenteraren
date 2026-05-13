@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}Arkiv · dokumenteraren{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <p class="eyebrow">Arkiv</p>
+    <h1>Dokument</h1>
+  </div>
+  <div class="actions">
+    <a class="button" href="/export/metadata.csv">CSV</a>
+    <a class="button" href="/export/metadata.json">JSON</a>
+    <a class="button" href="/export/zip">ZIP</a>
+    <a class="primary link-button" href="/upload">Ladda upp</a>
+  </div>
+</section>
+
+{% if message %}<div class="alert success">{{ message }}</div>{% endif %}
+
+<form class="filterbar" method="get" action="/">
+  <input name="q" value="{{ q }}" placeholder="Sök i text, taggar och metadata">
+  <select name="template_id">
+    <option value="">Alla mallar</option>
+    {% for item in templates_catalog | sort(attribute="name") %}
+      <option value="{{ item.id }}" {% if template_id == item.id %}selected{% endif %}>{{ item.name }}</option>
+    {% endfor %}
+  </select>
+  <select name="status">
+    <option value="">Alla statusar</option>
+    <option value="indexed" {% if status == "indexed" %}selected{% endif %}>Indexerat</option>
+    <option value="archived_only" {% if status == "archived_only" %}selected{% endif %}>Endast arkiverat</option>
+  </select>
+  <input name="tag" value="{{ tag }}" placeholder="Tagg">
+  <button>Sök</button>
+</form>
+
+<section class="split">
+  <div class="table-panel">
+    {% if documents %}
+    <table>
+      <thead>
+        <tr><th>Titel</th><th>Mall</th><th>Format</th><th>Status</th><th>Uppladdad</th></tr>
+      </thead>
+      <tbody>
+        {% for doc in documents %}
+        <tr>
+          <td>
+            <a href="/documents/{{ doc.id }}">{{ doc.title }}</a>
+            <small>{{ doc.original_filename }}</small>
+            {% if doc.tags %}
+            <div class="doc-tags" aria-label="Taggar för {{ doc.original_filename }}">
+              {% for tag_name in doc.tags.split(",") %}
+                {% if tag_name.strip() %}<span>{{ tag_name.strip() }}</span>{% endif %}
+              {% endfor %}
+            </div>
+            {% endif %}
+          </td>
+          <td>{{ template_by_id.get(doc.template_id, {}).get("name", "Ingen") }}</td>
+          <td>{{ doc.extension }}</td>
+          <td><span class="pill {{ doc.extraction_status }}">{{ doc.extraction_status }}</span></td>
+          <td>{{ doc.created_at[:10] }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty">Inga dokument matchar filtren.</div>
+    {% endif %}
+  </div>
+  <aside class="side-panel">
+    <h2>AI-status</h2>
+    <p><strong>{{ ai_status.provider }}</strong> · {% if ai_status.enabled %}aktiv{% else %}inaktiv{% endif %}</p>
+    <p class="muted">Data skickas inte till AI förrän provider är vald och anslutningstestet är godkänt.</p>
+    <h2>Backup</h2>
+    <p class="muted">Krypterad data ligger under <code>/data</code>. Lägg inkommande filer i <code>/import</code>; lyckade importer tas bort därifrån.</p>
+    <h2>Import</h2>
+    {% if import_events %}
+      <div class="event-list">
+      {% for event in import_events %}
+        <p><strong>{{ event.status }}</strong> · {{ event.filename }}<br><small>{{ event.created_at[:16] }} · {{ event.message }}</small></p>
+      {% endfor %}
+      </div>
+    {% else %}
+      <p class="muted">Ingen importhistorik än.</p>
+    {% endif %}
+  </aside>
+</section>
+{% endblock %}

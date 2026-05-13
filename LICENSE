@@ -1,0 +1,45 @@
+European Sovereign Infrastructure License (ESIL) v1.0
+
+Copyright (c) 2026 dokumenteraren
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to use,
+copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+the Software, subject to the following conditions:
+
+1. Sovereign Infrastructure Requirement
+   Any use of the Software in a production, customer-facing, or otherwise
+   externally accessible system must be deployed on infrastructure that:
+   - is owned, operated, or legally controlled by a legal entity established within Europe; and
+   - is physically located within the geographic boundaries of Europe.
+
+   For the purposes of this License, "control" means the ability to ensure
+   that no non-European jurisdiction can compel access to data, systems, or
+   operations without due process under European law.
+
+2. Non-Production Use
+   The Software may be used without restriction for development, testing,
+   evaluation, and security research, provided that such use is not externally
+   accessible and does not serve third-party users.
+
+3. Redistribution
+   Redistributions of the Software or any derivative works must include a copy
+   of this License and retain all copyright notices.
+
+4. No Trademark Rights
+   This License does not grant permission to use the names, trademarks, service
+   marks, or logos of the authors or contributors.
+
+5. Enforcement
+   Any use of the Software in violation of Section 1 automatically terminates
+   the rights granted under this License.
+
+6. Disclaimer of Warranty
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT.
+
+7. Limitation of Liability
+   IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+   CLAIM, DAMAGES, OR OTHER LIABILITY ARISING FROM, OUT OF, OR IN CONNECTION
+   WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
