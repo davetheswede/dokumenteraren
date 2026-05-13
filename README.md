@@ -7,9 +7,9 @@
 ![Self hosted](https://img.shields.io/badge/self--hosted-local--first-111827)
 ![Storage](https://img.shields.io/badge/storage-encrypted-0f766e)
 
-`dokumenteraren` är en lightweight svensk Papra/paperless-inspirerad dokumentapp för människor som vill äga sina viktiga dokument själva.
+`dokumenteraren` är en lightweight svensk Papra/paperless-inspirerad dokumentapp för människor som vill äga sina viktiga dokument själva, utan att göra molnlagring till standardsvaret på alla livets PDF:er.
 
-Den är byggd för hushåll, self-hosters och IT-personer som vill samla försäkringar, kvitton, bankpapper, avtal, mailbilagor och tekniska hemligheter i ett litet lokalt arkiv utan att dra in ett helt enterprise-DMS.
+Den är byggd för hushåll, self-hosters och IT-personer som vill samla försäkringar, kvitton, bankpapper, avtal, mailbilagor och tekniska hemligheter i ett litet lokalt arkiv där dokumenten faktiskt går att hitta igen.
 
 ![Arkivvy i dokumenteraren](docs/assets/dokumenteraren-archive.png)
 
@@ -20,7 +20,17 @@ Det finns redan riktigt bra dokumentarkiv.
 - [paperless-ngx](https://docs.paperless-ngx.com/) är stort, moget och kraftfullt.
 - [Papra](https://papra.app/en/) är modernare, snyggare och mer strömlinjeformat.
 
-`dokumenteraren` tar en annan position: mindre, svenskare, mer personlig, mer driftbar hemma och mer tydligt byggd för känsliga vardagsdokument. Tanken är inte att vinna på flest features, utan på att vara lätt att förstå, lätt att backa upp och trygg att köra själv.
+Och så finns den vanliga lösningen: släng allt i OneDrive, Google Drive, Dropbox eller valfri synkmapp och hoppas att filnamnet `scan_2024_final_final2.pdf` betyder något om tre år.
+
+`dokumenteraren` tar en annan position: mindre, svenskare, mer personlig, mer driftbar hemma och mer tydligt byggd för känsliga vardagsdokument. Allt hamnar på ett ställe, krypterat i vila, med dina nycklar på din maskin. Trafiken skyddar du med HTTPS i din egen drift, och dokumenten behöver inte automatiskt bo hos någon amerikansk hyperscaler på andra sidan Atlanten.
+
+Poängen är inte bara att lagra filer. Poängen är att förstå dem. När dokumenten indexeras kan du söka tvärs över försäkringsbrev, avtal, kvitton och tekniska anteckningar. Om du väljer att aktivera AI kan du dessutom prata med valda dokument:
+
+> "Vad händer om jag kör på en älg?"
+
+Har du lagt in bilförsäkring, villkor och skadeinformation kan appen hjälpa dig hitta relevanta delar i just dina dokument. Inte som juridisk rådgivning, men som ett snabbare sätt att hitta rätt i högen när du faktiskt behöver svaret.
+
+Tanken är inte att vinna på flest features, utan på att vara lätt att förstå, lätt att backa upp och trygg att köra själv.
 
 ## Vad Den Gör
 
