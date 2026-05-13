@@ -13,6 +13,8 @@ Den är byggd för hushåll, self-hosters och IT-personer som vill samla försä
 
 ![Arkivvy i dokumenteraren](docs/assets/dokumenteraren-archive.png)
 
+![Öppet dokument i dokumenteraren](docs/assets/dokumenteraren-document.png)
+
 ## Varför?
 
 Det finns redan riktigt bra dokumentarkiv.
