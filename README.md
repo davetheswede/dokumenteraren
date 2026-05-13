@@ -3,7 +3,7 @@
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.111-009688)
 ![Docker](https://img.shields.io/badge/Docker-ready-2496ED)
 ![Python](https://img.shields.io/badge/Python-3.12-3776AB)
-![License](https://img.shields.io/badge/license-MIT-green)
+![License](https://img.shields.io/badge/license-ESIL%20v1.0-green)
 ![Self hosted](https://img.shields.io/badge/self--hosted-local--first-111827)
 
 `dokumenteraren` är ett privat, self-hosted dokumentarkiv för viktiga filer: försäkringar, kvitton, bankhandlingar, juridik, tekniska hemligheter, mailbilagor och annat man vill kunna hitta igen utan att bygga ett helt dokumenthanteringssystem runt sig själv.
@@ -351,4 +351,4 @@ docker compose run --rm dokumenteraren python scripts/verify_acceptance.py
 
 ## Licens
 
-MIT. Se [LICENSE](LICENSE).
+European Sovereign Infrastructure License (ESIL) v1.0. Se [LICENSE](LICENSE).
