@@ -102,6 +102,21 @@ def get_document(document_id: int):
     return decrypt_document_row(row) if row else None
 
 
+def update_document_tags(document_id: int, tags: str) -> bool:
+    key = db.get_document_key(document_id)
+    if not key:
+        return False
+    with db.connect() as conn:
+        row = conn.execute("SELECT id FROM documents WHERE id = ?", (document_id,)).fetchone()
+        if not row:
+            return False
+        conn.execute(
+            "UPDATE documents SET tags = ? WHERE id = ?",
+            (crypto.encrypt_text(tags or "", key), document_id),
+        )
+    return True
+
+
 def search_documents(q: str = "", template_id: str = "", status: str = "", tag: str = ""):
     params: list[object] = []
     sql = "SELECT d.* FROM documents d"

@@ -11,6 +11,7 @@
     <a class="button" href="/export/zip?ids={{ document.id }}">ZIP</a>
   </div>
 </section>
+{% if message %}<div class="alert success">{{ message }}</div>{% endif %}
 <section class="detail-grid">
   <aside class="side-panel">
     <h2>Metadata</h2>
@@ -22,6 +23,13 @@
       <dt>Mall</dt><dd>{{ template_by_id.get(document.template_id, {}).get("name", "Ingen") }}</dd>
       <dt>Taggar</dt><dd>{{ document.tags or "-" }}</dd>
     </dl>
+    <form method="post" action="/documents/{{ document.id }}/tags" class="tag-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>Redigera taggar
+        <input name="tags" value="{{ document.tags }}" placeholder="försäkring, bil, 2026">
+      </label>
+      <button class="primary">Spara taggar</button>
+    </form>
     <h2>Extraherat</h2>
     <pre class="metadata">{{ metadata | tojson(indent=2) }}</pre>
   </aside>

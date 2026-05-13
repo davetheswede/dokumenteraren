@@ -18,7 +18,7 @@ from .catalog import DOCUMENT_TEMPLATES, TEMPLATE_BY_ID
 from .config import BASE_DIR, SECURE_COOKIES, SESSION_SECRET
 from .security import get_csrf_token, page_guard, redact_text, require_api_user, session_user, verify_csrf
 from .services import ai, export, importer, mail
-from .services.documents import document_to_dict, get_document, read_original_bytes, save_upload, search_documents
+from .services.documents import document_to_dict, get_document, read_original_bytes, save_upload, search_documents, update_document_tags
 
 app = FastAPI(title="dokumenteraren")
 app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET, same_site="lax", https_only=SECURE_COOKIES)
@@ -214,7 +214,7 @@ async def upload_document(
 
 
 @app.get("/documents/{document_id}", response_class=HTMLResponse)
-def document_detail(request: Request, document_id: int):
+def document_detail(request: Request, document_id: int, message: str = ""):
     guard = page_guard(request)
     if guard:
         return guard
@@ -222,7 +222,23 @@ def document_detail(request: Request, document_id: int):
     if not row:
         raise HTTPException(status_code=404)
     metadata = json.loads(row["metadata_json"] or "{}")
-    return render(request, "document_detail.html", {"document": row, "metadata": metadata})
+    messages = {"tags-updated": "Taggar uppdaterade."}
+    return render(
+        request,
+        "document_detail.html",
+        {"document": row, "metadata": metadata, "message": messages.get(message, "")},
+    )
+
+
+@app.post("/documents/{document_id}/tags")
+def document_tags_update(request: Request, document_id: int, tags: str = Form(""), csrf_token: str = Form(...)):
+    verify_csrf(request, csrf_token)
+    guard = page_guard(request)
+    if guard:
+        return guard
+    if not update_document_tags(document_id, tags):
+        raise HTTPException(status_code=404)
+    return RedirectResponse(f"/documents/{document_id}?message=tags-updated", status_code=303)
 
 
 @app.get("/documents/{document_id}/download")

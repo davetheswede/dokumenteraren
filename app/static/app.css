@@ -209,6 +209,14 @@ label {
   gap: 16px;
 }
 
+.tag-form {
+  display: grid;
+  gap: 12px;
+  margin: 18px 0 22px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
 .form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

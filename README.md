@@ -78,6 +78,8 @@ curl -X POST http://localhost:12006/api/v1/documents \
   -F "tags=bil,försäkring"
 ```
 
+Taggar kan också ändras i efterhand från dokumentets detaljsida. Sökning, metadataexport och API-listning använder det uppdaterade taggvärdet.
+
 Lista mallar:
 
 ```bash
@@ -142,7 +144,7 @@ Efter build kan kärnflödena verifieras i samma container som driftmiljön:
 docker compose run --rm dokumenteraren python scripts/verify_acceptance.py
 ```
 
-Skriptet kör mot en temporär datakatalog och verifierar auth/lösenordsbyte, API-upload, indexering/sök för vanliga format inklusive Office macro/template-varianter och flat OpenDocument, importkatalog, kryptering i vila, disabled AI-chat med redaktion, JSON/CSV/ZIP-export och säkra ZIP-filnamn.
+Skriptet kör mot en temporär datakatalog och verifierar auth/lösenordsbyte, API-upload, taggredigering, indexering/sök för vanliga format inklusive Office macro/template-varianter och flat OpenDocument, importkatalog, kryptering i vila, disabled AI-chat med redaktion, JSON/CSV/ZIP-export och säkra ZIP-filnamn.
 
 ## Driftanteckningar
 

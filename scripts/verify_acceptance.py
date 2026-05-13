@@ -256,6 +256,49 @@ def main() -> None:
             uploaded_ids.append(traversal_payload["id"])
             assert traversal_payload["original_filename"] == "konto.txt"
 
+            detail_page = client.get(f"/documents/{uploaded_ids[0]}")
+            assert detail_page.status_code == 200
+            assert f'action="/documents/{uploaded_ids[0]}/tags"' in detail_page.text
+            invalid_csrf = client.post(
+                f"/documents/{uploaded_ids[0]}/tags",
+                data={"csrf_token": "fel-token", "tags": "redigerad,acceptance"},
+                follow_redirects=False,
+            )
+            assert invalid_csrf.status_code == 403
+            updated_tags = client.post(
+                f"/documents/{uploaded_ids[0]}/tags",
+                data={"csrf_token": csrf(detail_page), "tags": "redigerad,acceptance"},
+                follow_redirects=False,
+            )
+            assert updated_tags.status_code == 303
+            assert updated_tags.headers["location"] == f"/documents/{uploaded_ids[0]}?message=tags-updated"
+            updated_detail = client.get(updated_tags.headers["location"])
+            assert updated_detail.status_code == 200
+            assert "Taggar uppdaterade." in updated_detail.text
+            assert 'value="redigerad,acceptance"' in updated_detail.text
+            old_tag_search = client.get(
+                "/api/v1/documents",
+                headers={"Authorization": f"Bearer {token}"},
+                params={"tag": "import"},
+            )
+            assert old_tag_search.status_code == 200
+            assert all(row["id"] != uploaded_ids[0] for row in old_tag_search.json())
+            new_tag_search = client.get(
+                "/api/v1/documents",
+                headers={"Authorization": f"Bearer {token}"},
+                params={"tag": "redigerad"},
+            )
+            assert new_tag_search.status_code == 200
+            assert any(row["id"] == uploaded_ids[0] for row in new_tag_search.json())
+            api_documents = client.get("/api/v1/documents", headers={"Authorization": f"Bearer {token}"})
+            assert api_documents.status_code == 200
+            edited_api_doc = next(row for row in api_documents.json() if row["id"] == uploaded_ids[0])
+            assert edited_api_doc["tags"] == "redigerad,acceptance"
+            metadata_after_tag_edit = client.get("/export/metadata.json")
+            assert metadata_after_tag_edit.status_code == 200
+            edited_export_doc = next(row for row in metadata_after_tag_edit.json() if row["id"] == uploaded_ids[0])
+            assert edited_export_doc["tags"] == "redigerad,acceptance"
+
             forbidden = client.post(
                 "/api/v1/documents",
                 headers={"Authorization": f"Bearer {token}"},
@@ -395,6 +438,7 @@ def main() -> None:
                     b"unikxlsx kvitto",
                     b"unikimport hemlig",
                     b"unikblockerad plaintext",
+                    "redigerad,acceptance".encode("utf-8"),
                 ]
             )
 
