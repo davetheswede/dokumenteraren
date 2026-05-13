@@ -81,12 +81,12 @@ Docker-imagen innehåller praktiska dokumentverktyg som LibreOffice, Poppler och
 
 ## Dokumentation
 
-Installationsguide, backup, importflöden, API och AI-konfiguration ligger i `docs/wiki`:
+Installationsguide, backup, importflöden, API och AI-konfiguration ligger i wikin:
 
-- [Installation](docs/wiki/Installation.md)
-- [Data, Backup och Säkerhet](docs/wiki/Data-Backup-och-Sakerhet.md)
-- [Import, API och CLI](docs/wiki/Import-API-och-CLI.md)
-- [AI-stöd](docs/wiki/AI-stod.md)
+- [Installation](https://github.com/davetheswede/dokumenteraren/wiki/Installation)
+- [Data, Backup och Säkerhet](https://github.com/davetheswede/dokumenteraren/wiki/Data-Backup-och-Sakerhet)
+- [Import, API och CLI](https://github.com/davetheswede/dokumenteraren/wiki/Import-API-och-CLI)
+- [AI-stöd](https://github.com/davetheswede/dokumenteraren/wiki/AI-stod)
 
 ## Licens
 
