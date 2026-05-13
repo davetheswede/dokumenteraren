@@ -6,20 +6,43 @@
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Self hosted](https://img.shields.io/badge/self--hosted-local--first-111827)
 
-`dokumenteraren` är ett privat, self-hosted dokumentarkiv för viktiga filer: försäkringar, kvitton, bankhandlingar, juridik, tekniska hemligheter, mailbilagor och annat man vill kunna hitta igen.
+`dokumenteraren` är ett privat, self-hosted dokumentarkiv för viktiga filer: försäkringar, kvitton, bankhandlingar, juridik, tekniska hemligheter, mailbilagor och annat man vill kunna hitta igen utan att bygga ett helt dokumenthanteringssystem runt sig själv.
 
 Appen är vibecodad tillsammans med AI. Jag är IT-arkitekt, inte programmerare till vardags, och projektet är ett sätt att lyfta in arkitekturtänk, driftkrav, informationssäkerhet och användarflöden i en konkret app.
 
-## Varför
+## Varför Finns Den?
 
-Målet är inte att ersätta ett stort DMS. Målet är att ha ett praktiskt privat arkiv som:
+Det finns redan bra dokumentarkiv. [paperless-ngx](https://docs.paperless-ngx.com/) är ett moget, kraftfullt dokumenthanteringssystem med OCR, tags, correspondents, document types, mail rules, workflows och mycket mer. [Papra](https://papra.app/en/) är ett modernare och enklare open source-alternativ med fokus på organisationer, taggar, sök och smidig arkivering.
 
-- går att köra själv i Docker
-- sparar data i en enkel backupvänlig katalog
-- krypterar dokument och metadata i vila
-- kan importera filer via webb, API, importkatalog, POP3 och IMAP
-- klassificerar dokument med mallar och taggar
-- gör det möjligt att prata med valda dokument via valfri AI-provider
+`dokumenteraren` finns för ett lite annat behov: ett privat, självhostat arkiv för en person eller ett hushåll där viktiga dokument blandas med tekniska hemligheter, mailbilagor, försäkringspapper, bankdokument, API-nycklar, kvitton och “sånt där man absolut behöver hitta när något händer”.
+
+Jag ville ha en app där arkitekturbesluten börjar i drift och informationshantering:
+
+- backup ska vara begripligt: en datakatalog att ta backup på
+- importkatalogen ska ligga utanför backupdata så okrypterade inkommande filer inte följer med
+- dokument, metadata och extraherad text ska krypteras i vila
+- mailimport ska vara en klient, inte en e-postserver
+- felaktiga poster ska kunna tas bort utan databasoperationer
+- API och CLI ska finnas från början
+- AI-chat ska vara opt-in och ske mot valfri provider, inte vara en dold molnkoppling
+- redaktion av känsliga mönster ska vara standard innan text skickas till AI
+
+## Hur Den Skiljer Sig
+
+Det här är inte tänkt som en “bättre paperless-ngx” eller en “bättre Papra”. Det är en annan tradeoff.
+
+| Område | dokumenteraren | paperless-ngx | Papra |
+| --- | --- | --- | --- |
+| Primärt fokus | Privat viktigt-arkiv för hushåll/person + tekniska dokument | Fullt dokumenthanteringssystem för pappersflöden och OCR | Modern dokumentarkivering med enkel organisation och taggar |
+| Målgrupp | Hemmalabbare, IT-personer, arkitekter, privatpersoner med backupdisciplin | Användare som vill ha ett moget DMS med mycket automatik | Användare som vill ha ett enklare, modernt dokumentarkiv |
+| Import | Webb, API, CLI, importkatalog, POP3, IMAP | Consumer-folder, mail, scanner/OCR-orienterade flöden | Self-hosted/hosted dokumentarkivering med taggar och regler |
+| Klassificering | Många färdiga privata mallar: försäkring, bank, juridik, tekniska hemligheter | Tags, correspondents, document types, custom fields och matchning | Organisationer, taggar och taggregler |
+| Hemligheter | Tekniska dokumenttyper som lösenordsvalv, SSH-nycklar, API-tokens, TLS, DNS | Möjligt att lagra, men inte appens uttalade designcentrum | Möjligt att lagra, men främst generell dokumentarkivering |
+| Backupmodell | `./data` är backupmål, `./import` separat | Mer komplett DMS-struktur med egen konfiguration och storage-modell | Beroende på deployment/storage |
+| AI | Avstängt som standard, valfri OpenAI/Claude/Ollama, redaktion först | AI är inte kärnflödet i huvudprojektet | Inte kärnpositioneringen |
+| Filosofi | Enkel, lokal, begriplig, arkitekturstyrd | Feature-rikt, moget, konfigurerbart | Enkelt, modernt, mer produktifierat |
+
+Välj paperless-ngx om du vill ha ett moget, battle-tested DMS med stark OCR-pipeline, correspondents, workflows och många administrationsmöjligheter. Välj Papra om du vill ha en modern och mer strömlinjeformad dokumentplattform. Testa `dokumenteraren` om du vill ha ett mindre, lokalt och privat arkiv där backup, kryptering, mailforwarding, API/CLI och “prata med mina dokument” är centrala från start.
 
 ## Funktioner
 
