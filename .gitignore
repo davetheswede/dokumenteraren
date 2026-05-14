@@ -12,3 +12,67 @@ data/
 import/
 visual-review/
 .verify-tmp/
+# AL runtime state
+!.al/skills/
+!.al/skills/*.md
+.env.snok
+pwd.env
+
+# AL / Granskarn generated artifacts
+/update.sh
+/update.md
+/update-*.md
+/update-report.md
+/granskarn-*.log
+/granskarn-*.json
+/visual-review/
+/artifacts/
+/screenshots/
+/ui-snapshots/
+/playwright-report/
+/test-results/
+/coverage/
+
+# Dependencies and build outputs
+.next/
+.turbo/
+.pnpm-store/
+dist/
+build/
+out/
+.cache/
+
+# Python/runtime caches
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# Local databases, logs and secrets
+*.log
+*.sqlite
+*.sqlite3
+*.db
+*.db-*
+*.key
+*.pem
+*.backup
+*.bin
+
+# Beads / Dolt runtime
+.beads/embeddeddolt/
+.beads/dolt/
+.beads/*.sock
+.beads/*.lock
+.beads/daemon.*
+.beads/export-state/
+.beads/backup/
+.dolt/
+.beads-credential-key
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
