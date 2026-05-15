@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import secrets
 import time
 from pathlib import Path
@@ -15,8 +16,20 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from . import db
 from .catalog import DOCUMENT_TEMPLATES, TEMPLATE_BY_ID
-from .config import BASE_DIR, SECURE_COOKIES, SESSION_SECRET
-from .security import get_csrf_token, page_guard, redact_text, require_api_user, session_user, verify_csrf
+from .config import BASE_DIR, FAIL2BAN_AUTH_LOG, SECURE_COOKIES, SESSION_SECRET
+from .security import (
+    actor_user,
+    client_ip,
+    effective_user,
+    geoip_lookup,
+    get_csrf_token,
+    ip_allowed,
+    page_guard,
+    redact_text,
+    require_api_user,
+    session_user,
+    verify_csrf,
+)
 from .services import ai, export, importer, mail, mail_importer
 from .services.documents import (
     delete_document,
@@ -72,6 +85,39 @@ def insecure_transport_warning_header(request: Request) -> str:
     return "Direct HTTP outside localhost detected. Use HTTPS/TLS proxy for LAN document access." if insecure_transport_warning(request) else ""
 
 
+def audit_context(request: Request, event_type: str, **kwargs) -> None:
+    actor = actor_user(request)
+    effective = effective_user(request)
+    settings = db.get_settings()
+    ip = client_ip(request)
+    geo = geoip_lookup(ip, settings.get("geoip_database_path", ""))
+    db.record_audit_event(
+        event_type,
+        actor_user_id=int(actor["id"]) if actor else None,
+        actor_username=str(actor["username"]) if actor else None,
+        effective_user_id=int(effective["id"]) if effective else None,
+        effective_username=str(effective["username"]) if effective else None,
+        ip_address=ip,
+        **geo,
+        **kwargs,
+    )
+
+
+def write_fail2ban_login_failure(ip: str, username: str) -> None:
+    FAIL2BAN_AUTH_LOG.parent.mkdir(parents=True, exist_ok=True)
+    safe_user = re.sub(r"[^A-Za-z0-9@._-]+", "_", username.strip())[:120] or "-"
+    with FAIL2BAN_AUTH_LOG.open("a", encoding="utf-8") as handle:
+        handle.write(f"{db.utc_now()} LOGIN_FAILED ip={ip} username={safe_user} path=/login\n")
+
+
+def user_can_invite(settings: dict[str, str]) -> bool:
+    return mail.smtp_configured() and settings.get("user_invites_enabled", "true") == "true"
+
+
+def share_can_invite(settings: dict[str, str]) -> bool:
+    return mail.smtp_configured() and settings.get("share_invites_enabled", "true") == "true"
+
+
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
     response = await call_next(request)
@@ -98,16 +144,21 @@ async def startup() -> None:
 def render(request: Request, template: str, context: dict | None = None, status_code: int = 200) -> HTMLResponse:
     context = context or {}
     user = session_user(request)
+    actor = actor_user(request)
     settings = db.get_settings()
     context.update(
         {
             "request": request,
             "user": user,
+            "actor": actor,
+            "is_impersonating": bool(request.session.get("admin_user_id")),
             "csrf_token": get_csrf_token(request),
             "templates_catalog": DOCUMENT_TEMPLATES,
             "template_by_id": TEMPLATE_BY_ID,
             "ai_status": ai.public_ai_status(settings),
             "smtp_configured": mail.smtp_configured(),
+            "user_invites_active": user_can_invite(settings),
+            "share_invites_active": share_can_invite(settings),
             "import_events": db.list_import_events(8),
             "transport_warning": insecure_transport_warning(request),
         }
@@ -126,7 +177,12 @@ def index(request: Request, q: str = "", template_id: str = "", status: str = ""
     guard = page_guard(request)
     if guard:
         return guard
-    rows = search_documents(q=q, template_id=template_id, status=status, tag=tag)
+    user = session_user(request)
+    if user["role"] == "admin":
+        rows = []
+        message = message or "Adminläget har inte direkt filåtkomst. Impersonera en användare från Settings vid support."
+    else:
+        rows = search_documents(q=q, template_id=template_id, status=status, tag=tag, user_id=user["id"])
     return render(
         request,
         "archive.html",
@@ -154,16 +210,32 @@ def login_page(request: Request):
 @app.post("/login")
 def login(request: Request, username: str = Form(...), password: str = Form(...), csrf_token: str = Form(...)):
     verify_csrf(request, csrf_token)
-    user = db.get_user_by_username(username.strip())
+    clean_username = username.strip()
+    user = db.get_user_by_username(clean_username)
     if not user or not db.verify_password(password, user["password_hash"]):
+        ip = client_ip(request)
+        settings = db.get_settings()
+        geo = geoip_lookup(ip, settings.get("geoip_database_path", ""))
+        db.record_audit_event(
+            "login_failed",
+            actor_username=clean_username,
+            effective_username=clean_username,
+            ip_address=ip,
+            **geo,
+        )
+        write_fail2ban_login_failure(ip, clean_username)
         return render(request, "login.html", {"error": "Fel användarnamn eller lösenord."}, status_code=401)
     request.session["user_id"] = user["id"]
+    request.session.pop("admin_user_id", None)
+    audit_context(request, "login_success")
     return RedirectResponse("/change-password" if user["must_change_password"] else "/", status_code=303)
 
 
 @app.post("/logout")
 def logout(request: Request, csrf_token: str = Form(...)):
     verify_csrf(request, csrf_token)
+    if request.session.get("admin_user_id"):
+        audit_context(request, "impersonation_stop")
     request.session.clear()
     return RedirectResponse("/login", status_code=303)
 
@@ -204,6 +276,8 @@ def upload_page(request: Request):
     guard = page_guard(request)
     if guard:
         return guard
+    if session_user(request)["role"] == "admin":
+        raise HTTPException(status_code=403, detail="Admin har inte direkt filåtkomst. Impersonera en användare från godkänd IP för support.")
     return render(request, "upload.html")
 
 
@@ -218,6 +292,8 @@ async def upload_document(
     if guard:
         return guard
     user = session_user(request)
+    if user["role"] == "admin":
+        raise HTTPException(status_code=403, detail="Admin har inte direkt filåtkomst.")
     uploads = [
         item
         for item in [*form.getlist("files"), *form.getlist("file")]
@@ -232,7 +308,10 @@ async def upload_document(
     document_ids: list[int] = []
     for index, upload in enumerate(uploads):
         template_id = template_ids[index] if index < len(template_ids) else (template_ids[0] if template_ids else "")
-        document_ids.append(await save_upload(upload, user["id"], template_id, tags))
+        document_id = await save_upload(upload, user["id"], template_id, tags)
+        document_ids.append(document_id)
+        row = get_document(document_id, user["id"])
+        audit_context(request, "upload", document_id=document_id, document_title=row["title"] if row else None)
 
     if len(document_ids) == 1:
         return RedirectResponse(f"/documents/{document_ids[0]}", status_code=303)
@@ -244,7 +323,10 @@ def document_detail(request: Request, document_id: int, message: str = ""):
     guard = page_guard(request)
     if guard:
         return guard
-    row = get_document(document_id)
+    user = session_user(request)
+    if user["role"] == "admin":
+        raise HTTPException(status_code=403, detail="Admin har inte direkt filåtkomst.")
+    row = get_document(document_id, user["id"])
     if not row:
         raise HTTPException(status_code=404)
     metadata = json.loads(row["metadata_json"] or "{}")
@@ -252,7 +334,13 @@ def document_detail(request: Request, document_id: int, message: str = ""):
     return render(
         request,
         "document_detail.html",
-        {"document": row, "metadata": metadata, "checksum_status": verify_document_checksums(row), "message": messages.get(message, "")},
+        {
+            "document": row,
+            "metadata": metadata,
+            "checksum_status": verify_document_checksums(row),
+            "message": messages.get(message, ""),
+            "access_entries": db.list_document_access(document_id),
+        },
     )
 
 
@@ -270,8 +358,11 @@ def document_classification_update(
         return guard
     if template_id and template_id not in TEMPLATE_BY_ID:
         raise HTTPException(status_code=400, detail="Okänd dokumentmall.")
-    if not update_document_classification(document_id, template_id, tags):
+    user = session_user(request)
+    if user["role"] == "admin" or not update_document_classification(document_id, template_id, tags, user["id"]):
         raise HTTPException(status_code=404)
+    row = get_document(document_id, user["id"])
+    audit_context(request, "metadata_update", document_id=document_id, document_title=row["title"] if row else None)
     return RedirectResponse(f"/documents/{document_id}?message=classification-updated", status_code=303)
 
 
@@ -281,7 +372,8 @@ def document_tags_update(request: Request, document_id: int, tags: str = Form(""
     guard = page_guard(request)
     if guard:
         return guard
-    if not update_document_tags(document_id, tags):
+    user = session_user(request)
+    if user["role"] == "admin" or not update_document_tags(document_id, tags, user["id"]):
         raise HTTPException(status_code=404)
     return RedirectResponse(f"/documents/{document_id}?message=tags-updated", status_code=303)
 
@@ -292,7 +384,11 @@ def document_delete(request: Request, document_id: int, csrf_token: str = Form(.
     guard = page_guard(request)
     if guard:
         return guard
-    if not delete_document(document_id):
+    user = session_user(request)
+    row = get_document(document_id, user["id"]) if user["role"] != "admin" else None
+    if row:
+        audit_context(request, "delete", document_id=document_id, document_title=row["title"])
+    if user["role"] == "admin" or not delete_document(document_id, user["id"]):
         raise HTTPException(status_code=404)
     return RedirectResponse("/?message=Dokumentet raderades.", status_code=303)
 
@@ -302,11 +398,15 @@ def download_document(request: Request, document_id: int):
     guard = page_guard(request)
     if guard:
         return guard
-    row = get_document(document_id)
+    user = session_user(request)
+    if user["role"] == "admin":
+        raise HTTPException(status_code=403, detail="Admin har inte direkt filåtkomst.")
+    row = get_document(document_id, user["id"])
     if not row:
         raise HTTPException(status_code=404)
+    audit_context(request, "download", document_id=document_id, document_title=row["title"])
     return Response(
-        read_original_bytes(row),
+        read_original_bytes(row, user["id"]),
         media_type=row["mime_type"],
         headers={"Content-Disposition": f'attachment; filename="{row["original_filename"]}"'},
     )
@@ -317,7 +417,10 @@ def chat_page(request: Request):
     guard = page_guard(request)
     if guard:
         return guard
-    rows = search_documents()
+    user = session_user(request)
+    if user["role"] == "admin":
+        raise HTTPException(status_code=403, detail="Admin har inte direkt filåtkomst.")
+    rows = search_documents(user_id=user["id"])
     return render(request, "chat.html", {"documents": rows, "answer": None, "used_context": None})
 
 
@@ -334,9 +437,12 @@ async def chat_ask(
     guard = page_guard(request)
     if guard:
         return guard
-    rows = [row for row in (get_document(doc_id) for doc_id in document_ids) if row]
+    user = session_user(request)
+    if user["role"] == "admin":
+        raise HTTPException(status_code=403, detail="Admin har inte direkt filåtkomst.")
+    rows = [row for row in (get_document(doc_id, user["id"]) for doc_id in document_ids) if row]
     if not rows:
-        return render(request, "chat.html", {"documents": search_documents(), "error": "Välj minst ett dokument."}, status_code=400)
+        return render(request, "chat.html", {"documents": search_documents(user_id=user["id"]), "error": "Välj minst ett dokument."}, status_code=400)
     parts = []
     for row in rows:
         text = (row["extracted_text"] or "")[:6000]
@@ -351,20 +457,20 @@ async def chat_ask(
         return render(
             request,
             "chat.html",
-            {"documents": search_documents(), "error": str(exc), "used_context": context, "question": question},
+            {"documents": search_documents(user_id=user["id"]), "error": str(exc), "used_context": context, "question": question},
             status_code=400,
         )
     except Exception as exc:
         return render(
             request,
             "chat.html",
-            {"documents": search_documents(), "error": f"AI-anropet misslyckades: {exc.__class__.__name__}", "used_context": context},
+            {"documents": search_documents(user_id=user["id"]), "error": f"AI-anropet misslyckades: {exc.__class__.__name__}", "used_context": context},
             status_code=502,
         )
     return render(
         request,
         "chat.html",
-        {"documents": search_documents(), "answer": answer, "used_context": context, "question": question},
+        {"documents": search_documents(user_id=user["id"]), "answer": answer, "used_context": context, "question": question},
     )
 
 
@@ -375,17 +481,100 @@ def settings_page(request: Request, message: str = "", error: str = "", token_cr
         return guard
     settings = db.get_settings()
     new_token = pop_api_token_flash(token_created)
+    ip = client_ip(request)
     return render(
         request,
         "settings.html",
         {
             "settings": settings,
             "api_tokens": db.list_api_tokens(session_user(request)["id"]),
+            "users": db.list_users(),
+            "normal_users": db.list_users(include_admin=False),
+            "current_ip": ip,
+            "impersonation_allowed": ip_allowed(ip, settings.get("admin_impersonation_allowed_ips", "")),
             "message": message,
             "error": error,
             "new_token": new_token,
         },
     )
+
+
+@app.post("/settings/users/invite")
+def invite_user(request: Request, email: str = Form(...), csrf_token: str = Form(...)):
+    verify_csrf(request, csrf_token)
+    guard = admin_guard(request)
+    if guard:
+        return guard
+    settings = db.get_settings()
+    if not user_can_invite(settings):
+        return RedirectResponse("/settings?error=Användarinbjudningar kräver SMTP-konfiguration.", status_code=303)
+    admin = session_user(request)
+    token = db.create_user_invite(email, admin["id"])
+    link = str(request.url_for("accept_user_invite_page", token=token))
+    mail.send_mail(email, "Inbjudan till dokumenteraren", f"Öppna länken för att skapa ditt konto:\n\n{link}\n")
+    audit_context(request, "user_invite_created", metadata={"email": email.strip().lower()})
+    return RedirectResponse("/settings?message=Användarinbjudan skickad.", status_code=303)
+
+
+@app.post("/settings/import-owner")
+def save_import_owner(request: Request, import_owner_user_id: str = Form(""), csrf_token: str = Form(...)):
+    verify_csrf(request, csrf_token)
+    guard = admin_guard(request)
+    if guard:
+        return guard
+    if not import_owner_user_id.isdigit():
+        return RedirectResponse("/settings?error=Välj en aktiv icke-admin-användare som importägare.", status_code=303)
+    user = db.get_user(int(import_owner_user_id))
+    if not user or user["role"] == "admin" or user["status"] != "active":
+        return RedirectResponse("/settings?error=Importägaren måste vara en aktiv icke-admin-användare.", status_code=303)
+    db.set_settings({"import_owner_user_id": str(user["id"])})
+    audit_context(request, "import_owner_changed", metadata={"user_id": int(user["id"]), "username": user["username"]})
+    return RedirectResponse("/settings?message=Importägare sparad.", status_code=303)
+
+
+@app.post("/settings/impersonation")
+def save_impersonation_settings(
+    request: Request,
+    admin_impersonation_allowed_ips: str = Form(""),
+    csrf_token: str = Form(...),
+):
+    verify_csrf(request, csrf_token)
+    guard = admin_guard(request)
+    if guard:
+        return guard
+    db.set_settings({"admin_impersonation_allowed_ips": admin_impersonation_allowed_ips.strip()})
+    return RedirectResponse("/settings?message=Impersoneringsallowlist sparad.", status_code=303)
+
+
+@app.post("/settings/impersonate/{user_id}")
+def start_impersonation(request: Request, user_id: int, csrf_token: str = Form(...)):
+    verify_csrf(request, csrf_token)
+    guard = admin_guard(request)
+    if guard:
+        return guard
+    settings = db.get_settings()
+    if not ip_allowed(client_ip(request), settings.get("admin_impersonation_allowed_ips", "")):
+        raise HTTPException(status_code=403, detail="Impersonering kräver godkänd IP.")
+    target = db.get_user(user_id)
+    if not target or target["role"] == "admin" or target["status"] != "active":
+        raise HTTPException(status_code=404)
+    admin = session_user(request)
+    request.session["admin_user_id"] = int(admin["id"])
+    request.session["user_id"] = int(target["id"])
+    audit_context(request, "impersonation_start", metadata={"target_user_id": int(target["id"]), "target_username": target["username"]})
+    return RedirectResponse("/", status_code=303)
+
+
+@app.post("/impersonation/stop")
+def stop_impersonation(request: Request, csrf_token: str = Form(...)):
+    verify_csrf(request, csrf_token)
+    admin_user_id = request.session.get("admin_user_id")
+    if not admin_user_id:
+        return RedirectResponse("/", status_code=303)
+    audit_context(request, "impersonation_stop")
+    request.session["user_id"] = int(admin_user_id)
+    request.session.pop("admin_user_id", None)
+    return RedirectResponse("/settings?message=Impersonering avslutad.", status_code=303)
 
 
 @app.post("/settings/ai")
@@ -539,12 +728,107 @@ def test_mail(request: Request, to_addr: str = Form(...), csrf_token: str = Form
     return RedirectResponse("/settings?message=Testmail skickat.", status_code=303)
 
 
+@app.get("/invites/users/{token}", response_class=HTMLResponse, name="accept_user_invite_page")
+def accept_user_invite_page(request: Request, token: str):
+    return render(request, "accept_user_invite.html", {"token": token})
+
+
+@app.post("/invites/users/{token}")
+def accept_user_invite(request: Request, token: str, username: str = Form(...), password: str = Form(...), csrf_token: str = Form(...)):
+    verify_csrf(request, csrf_token)
+    user_id = db.accept_user_invite(token, username, password)
+    if not user_id:
+        return render(request, "accept_user_invite.html", {"token": token, "error": "Inbjudan är ogiltig, förbrukad eller har gått ut."}, status_code=400)
+    user = db.get_user(user_id)
+    db.record_audit_event("user_invite_accepted", actor_user_id=user_id, actor_username=user["username"], effective_user_id=user_id, effective_username=user["username"])
+    request.session["user_id"] = user_id
+    return RedirectResponse("/", status_code=303)
+
+
+@app.get("/invites/shares/{token}")
+def accept_share_invite(request: Request, token: str):
+    guard = page_guard(request)
+    if guard:
+        return guard
+    user = session_user(request)
+    if user["role"] == "admin":
+        raise HTTPException(status_code=403, detail="Admin kan inte acceptera dokumentdelningar.")
+    document_id = db.accept_share_invite(token, user["id"])
+    if not document_id:
+        raise HTTPException(status_code=400, detail="Delningsinbjudan är ogiltig, förbrukad eller har gått ut.")
+    row = get_document(document_id, user["id"])
+    audit_context(request, "share_invite_accepted", document_id=document_id, document_title=row["title"] if row else None)
+    return RedirectResponse(f"/documents/{document_id}?message=Delning accepterad.", status_code=303)
+
+
+@app.post("/documents/{document_id}/share")
+def share_document(
+    request: Request,
+    document_id: int,
+    recipient_email: str = Form(""),
+    recipient_user_id: str = Form(""),
+    csrf_token: str = Form(...),
+):
+    verify_csrf(request, csrf_token)
+    guard = page_guard(request)
+    if guard:
+        return guard
+    user = session_user(request)
+    if user["role"] == "admin":
+        raise HTTPException(status_code=403, detail="Admin har inte direkt filåtkomst.")
+    row = get_document(document_id, user["id"])
+    if not row or row.get("access_permission") != "owner":
+        raise HTTPException(status_code=404)
+    settings = db.get_settings()
+    if not share_can_invite(settings):
+        return RedirectResponse(f"/documents/{document_id}?message=Delning kräver SMTP-konfiguration.", status_code=303)
+    target_user_id = int(recipient_user_id) if recipient_user_id.isdigit() else None
+    email = recipient_email.strip()
+    if not email and target_user_id:
+        target = db.get_user(target_user_id)
+        email = target["email"] if target and target["email"] else ""
+    if not email:
+        return RedirectResponse(f"/documents/{document_id}?message=Ange mottagarens e-post.", status_code=303)
+    token = db.create_share_invite(document_id, user["id"], recipient_email=email, recipient_user_id=target_user_id)
+    link = str(request.url_for("accept_share_invite", token=token))
+    mail.send_mail(email, "Dokument delat i dokumenteraren", f"Öppna länken när du är inloggad för att acceptera delningen:\n\n{link}\n")
+    audit_context(request, "share_invite_created", document_id=document_id, document_title=row["title"], metadata={"recipient_email": email})
+    return RedirectResponse(f"/documents/{document_id}?message=Delningsinbjudan skickad.", status_code=303)
+
+
+@app.post("/documents/{document_id}/share/{user_id}/revoke")
+def revoke_share(request: Request, document_id: int, user_id: int, csrf_token: str = Form(...)):
+    verify_csrf(request, csrf_token)
+    guard = page_guard(request)
+    if guard:
+        return guard
+    user = session_user(request)
+    row = get_document(document_id, user["id"]) if user["role"] != "admin" else None
+    if not row or row.get("access_permission") != "owner":
+        raise HTTPException(status_code=404)
+    if db.revoke_document_access(document_id, user_id):
+        audit_context(request, "share_revoked", document_id=document_id, document_title=row["title"], metadata={"revoked_user_id": user_id})
+    return RedirectResponse(f"/documents/{document_id}?message=Delning återkallad.", status_code=303)
+
+
+@app.get("/activity", response_class=HTMLResponse)
+def activity_page(request: Request):
+    guard = page_guard(request)
+    if guard:
+        return guard
+    user = session_user(request)
+    return render(request, "activity.html", {"events": db.list_audit_events(user["id"], user["role"])})
+
+
 @app.get("/export/metadata.json")
 def export_json(request: Request):
     guard = page_guard(request)
     if guard:
         return guard
-    return JSONResponse([document_to_dict(row) for row in search_documents()])
+    user = session_user(request)
+    if user["role"] == "admin":
+        return JSONResponse([])
+    return JSONResponse([document_to_dict(row) for row in search_documents(user_id=user["id"])])
 
 
 @app.get("/export/metadata.csv")
@@ -552,7 +836,10 @@ def export_csv(request: Request):
     guard = page_guard(request)
     if guard:
         return guard
-    return PlainTextResponse(export.export_metadata_csv(search_documents()), media_type="text/csv")
+    user = session_user(request)
+    if user["role"] == "admin":
+        return PlainTextResponse(export.export_metadata_csv([]), media_type="text/csv")
+    return PlainTextResponse(export.export_metadata_csv(search_documents(user_id=user["id"])), media_type="text/csv")
 
 
 @app.get("/export/zip")
@@ -560,10 +847,14 @@ def export_zip(request: Request, ids: str = ""):
     guard = page_guard(request)
     if guard:
         return guard
+    user = session_user(request)
+    if user["role"] == "admin":
+        raise HTTPException(status_code=403, detail="Admin har inte direkt filåtkomst.")
     document_ids = [int(part) for part in ids.split(",") if part.strip().isdigit()]
-    export.create_zip(document_ids)
+    export.create_zip(document_ids, user_id=user["id"])
+    audit_context(request, "export_zip", metadata={"document_ids": document_ids})
     return Response(
-        export.create_zip_bytes(document_ids),
+        export.create_zip_bytes(document_ids, user_id=user["id"]),
         media_type="application/zip",
         headers={"Content-Disposition": 'attachment; filename="dokumenteraren_export.zip"'},
     )
@@ -575,15 +866,19 @@ def export_mail(request: Request, to_addr: str = Form(...), ids: str = Form(""),
     guard = page_guard(request)
     if guard:
         return guard
+    user = session_user(request)
+    if user["role"] == "admin":
+        raise HTTPException(status_code=403, detail="Admin har inte direkt filåtkomst.")
     try:
         document_ids = [int(part) for part in ids.split(",") if part.strip().isdigit()]
-        export.create_zip(document_ids)
+        export.create_zip(document_ids, user_id=user["id"])
         mail.send_mail(
             to_addr,
             "Export från dokumenteraren",
             "Bifogat finns vald export.",
-            attachment_bytes=export.create_zip_bytes(document_ids),
+            attachment_bytes=export.create_zip_bytes(document_ids, user_id=user["id"]),
         )
+        audit_context(request, "export_zip", metadata={"document_ids": document_ids, "sent_by_mail": True})
     except Exception as exc:
         return RedirectResponse(f"/settings?error=Exportmail misslyckades: {exc.__class__.__name__}", status_code=303)
     return RedirectResponse("/settings?message=Export skickad via mail.", status_code=303)
@@ -601,16 +896,34 @@ def api_imports(user=Depends(require_api_user)):
 
 @app.get("/api/v1/documents")
 def api_documents(user=Depends(require_api_user), q: str = "", template_id: str = "", status: str = "", tag: str = ""):
-    return [document_to_dict(row) for row in search_documents(q=q, template_id=template_id, status=status, tag=tag)]
+    if user["role"] == "admin":
+        return []
+    return [document_to_dict(row) for row in search_documents(q=q, template_id=template_id, status=status, tag=tag, user_id=user["id"])]
 
 
 @app.post("/api/v1/documents")
 async def api_upload_document(
+    request: Request,
     user=Depends(require_api_user),
     file: UploadFile = File(...),
     template_id: str = Form(""),
     tags: str = Form(""),
 ):
+    if user["role"] == "admin":
+        raise HTTPException(status_code=403, detail="Admin API-token har inte filåtkomst.")
     document_id = await save_upload(file, user["id"], template_id, tags)
-    row = get_document(document_id)
+    row = get_document(document_id, user["id"])
+    ip = client_ip(request)
+    geo = geoip_lookup(ip, db.get_settings().get("geoip_database_path", ""))
+    db.record_audit_event(
+        "upload",
+        actor_user_id=int(user["id"]),
+        actor_username=user["username"],
+        effective_user_id=int(user["id"]),
+        effective_username=user["username"],
+        document_id=document_id,
+        document_title=row["title"] if row else None,
+        ip_address=ip,
+        **geo,
+    )
     return document_to_dict(row)

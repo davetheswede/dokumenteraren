@@ -17,10 +17,17 @@ _seen: dict[Path, tuple[int, int]] = {}
 
 
 def import_owner_user_id() -> int:
-    admin = db.get_user_by_username("admin")
-    if not admin:
-        raise RuntimeError("Admin-konto saknas.")
-    return int(admin["id"])
+    settings = db.get_settings()
+    configured = settings.get("import_owner_user_id", "").strip()
+    if configured.isdigit():
+        user = db.get_user(int(configured))
+        if user and user["role"] != "admin" and user["status"] == "active":
+            return int(user["id"])
+    david = db.get_user_by_username("David")
+    if david and david["role"] != "admin" and david["status"] == "active":
+        db.set_settings({"import_owner_user_id": str(david["id"])})
+        return int(david["id"])
+    raise RuntimeError("Import kräver en aktiv icke-admin-användare som importägare.")
 
 
 def is_ready(path: Path) -> bool:

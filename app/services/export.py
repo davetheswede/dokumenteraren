@@ -61,14 +61,14 @@ def safe_zip_member(prefix: str, filename: str, document_id: int) -> str:
     return f"{safe_prefix}/{document_id}_{leaf}"
 
 
-def selected_rows(document_ids: list[int]):
+def selected_rows(document_ids: list[int], user_id: int | None = None):
     if not document_ids:
-        return search_documents()
-    return [row for row in (get_document(doc_id) for doc_id in document_ids) if row]
+        return search_documents(user_id=user_id)
+    return [row for row in (get_document(doc_id, user_id) for doc_id in document_ids) if row]
 
 
-def create_zip_bytes(document_ids: list[int]) -> bytes:
-    rows = selected_rows(document_ids)
+def create_zip_bytes(document_ids: list[int], user_id: int | None = None) -> bytes:
+    rows = selected_rows(document_ids, user_id=user_id)
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         manifest = []
@@ -77,7 +77,7 @@ def create_zip_bytes(document_ids: list[int]) -> bytes:
             manifest.append(info)
             archive.writestr(
                 safe_zip_member("original", row["original_filename"], row["id"]),
-                read_original_bytes(row),
+                read_original_bytes(row, user_id=user_id),
             )
             archive.writestr(f"metadata/{row['id']}.json", json.dumps(info, ensure_ascii=False, indent=2))
             archive.writestr(f"text/{row['id']}.md", row["extracted_text"] or "")
@@ -85,9 +85,9 @@ def create_zip_bytes(document_ids: list[int]) -> bytes:
     return buffer.getvalue()
 
 
-def create_zip(document_ids: list[int]) -> Path:
+def create_zip(document_ids: list[int], user_id: int | None = None) -> Path:
     """Persist an encrypted export artifact for audit/backup, never plaintext."""
     EXPORT_DIR.mkdir(parents=True, exist_ok=True)
     path = EXPORT_DIR / "dokumenteraren_export.zip.enc"
-    path.write_bytes(crypto.encrypt_bytes(create_zip_bytes(document_ids)))
+    path.write_bytes(crypto.encrypt_bytes(create_zip_bytes(document_ids, user_id=user_id)))
     return path

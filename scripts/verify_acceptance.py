@@ -198,6 +198,14 @@ def main() -> None:
             assert unauthenticated.status_code == 303 and unauthenticated.headers["location"] == "/login"
             api_unauthenticated = client.get("/api/v1/documents")
             assert api_unauthenticated.status_code == 401
+            failed_login_page = client.get("/login")
+            failed_login = client.post(
+                "/login",
+                data={"username": "admin", "password": "wrong-password", "csrf_token": csrf(failed_login_page)},
+            )
+            assert failed_login.status_code == 401
+            fail2ban_log = Path(runtime_dir.name) / "logs" / "fail2ban-auth.log"
+            assert fail2ban_log.exists() and "LOGIN_FAILED" in fail2ban_log.read_text(encoding="utf-8")
 
             login_page = client.get("/login")
             login = client.post(
@@ -221,6 +229,58 @@ def main() -> None:
                 follow_redirects=False,
             )
             assert changed.status_code == 303 and changed.headers["location"] == "/"
+            admin_archive = client.get("/")
+            assert admin_archive.status_code == 200
+            assert "Adminläget har inte direkt filåtkomst" in admin_archive.text
+            admin_upload = client.get("/upload")
+            assert admin_upload.status_code == 403
+            admin_token = db.create_api_token(1, "admin-acceptance")
+            admin_docs = client.get("/api/v1/documents", headers={"Authorization": f"Bearer {admin_token}"})
+            assert admin_docs.status_code == 200 and admin_docs.json() == []
+            settings_page = client.get("/settings")
+            blocked_invite = client.post(
+                "/settings/users/invite",
+                data={"csrf_token": csrf(settings_page), "email": "blocked@example.test"},
+                follow_redirects=False,
+            )
+            assert blocked_invite.status_code == 303 and "kr%C3%A4ver" in blocked_invite.headers["location"]
+            blocked_impersonation = client.post(
+                "/settings/impersonate/2",
+                data={"csrf_token": csrf(settings_page)},
+                headers={"x-forwarded-for": "127.0.0.1"},
+                follow_redirects=False,
+            )
+            assert blocked_impersonation.status_code == 403
+            allow_saved = client.post(
+                "/settings/impersonation",
+                data={"csrf_token": csrf(settings_page), "admin_impersonation_allowed_ips": "127.0.0.1"},
+                headers={"x-forwarded-for": "127.0.0.1"},
+                follow_redirects=False,
+            )
+            assert allow_saved.status_code == 303
+            settings_page = client.get("/settings", headers={"x-forwarded-for": "127.0.0.1"})
+            impersonated = client.post(
+                "/settings/impersonate/2",
+                data={"csrf_token": csrf(settings_page)},
+                headers={"x-forwarded-for": "127.0.0.1"},
+                follow_redirects=False,
+            )
+            assert impersonated.status_code == 303
+            assert "Impersonerar David" in client.get("/").text
+            stopped = client.post("/impersonation/stop", data={"csrf_token": csrf(client.get('/'))}, follow_redirects=False)
+            assert stopped.status_code == 303
+            logged_out_admin = client.post("/logout", data={"csrf_token": csrf(change_page)}, follow_redirects=False)
+            assert logged_out_admin.status_code == 303
+            david_login_page = client.get("/login")
+            david_login = client.post(
+                "/login",
+                data={"username": "David", "password": "Maj2Fant", "csrf_token": csrf(david_login_page)},
+                follow_redirects=False,
+            )
+            assert david_login.status_code == 303 and david_login.headers["location"] == "/"
+            david = db.get_user_by_username("David")
+            assert david and david["role"] == "user"
+            assert db.verify_password("Maj2Fant", david["password_hash"])
             assert len(DOCUMENT_TEMPLATES) >= 77
             assert any(item["id"] == "health_insurance" and item["name"] == "Sjukförsäkring" for item in DOCUMENT_TEMPLATES)
             assert any(item["id"] == "dog_insurance" and item["name"] == "Hundförsäkring" for item in DOCUMENT_TEMPLATES)
@@ -231,7 +291,7 @@ def main() -> None:
             assert upload_page.status_code == 200
             assert 'name="files"' in upload_page.text and 'name="template_id"' in upload_page.text
 
-            token = db.create_api_token(1, "acceptance")
+            token = db.create_api_token(david["id"], "acceptance")
             uploaded_ids: list[int] = []
             multi_upload = client.post(
                 "/upload",
@@ -415,6 +475,102 @@ def main() -> None:
                 assert any(item["original_filename"] == "text-token.txt" for item in manifest)
 
             assert safe_zip_member("original", "../../..\\CON.txt", 99) == "original/99_CON.txt"
+
+            bob_invite = db.create_user_invite("bob@example.test", david["id"])
+            bob_id = db.accept_user_invite(bob_invite, "Bob", "acceptance-bob")
+            assert bob_id
+            bob_token = db.create_api_token(bob_id, "bob")
+            bob_before_share = client.get("/api/v1/documents", headers={"Authorization": f"Bearer {bob_token}"})
+            assert bob_before_share.status_code == 200
+            assert all(row["id"] != uploaded_ids[0] for row in bob_before_share.json())
+            sent_mail: list[str] = []
+            old_env = {key: os.environ.get(key) for key in ["SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASS", "MAIL_FROM"]}
+            os.environ.update(
+                {
+                    "SMTP_HOST": "smtp.example.test",
+                    "SMTP_PORT": "587",
+                    "SMTP_USER": "noreply@example.test",
+                    "SMTP_PASS": "secret",
+                    "MAIL_FROM": "noreply@example.test",
+                }
+            )
+            from app.services import mail as app_mail
+
+            real_send_mail = app_mail.send_mail
+            app_mail.send_mail = lambda to_addr, subject, text, **kwargs: sent_mail.append(text)  # type: ignore[assignment]
+            try:
+                share_page = client.get(f"/documents/{uploaded_ids[0]}")
+                share_response = client.post(
+                    f"/documents/{uploaded_ids[0]}/share",
+                    data={"csrf_token": csrf(share_page), "recipient_email": "bob@example.test"},
+                    follow_redirects=False,
+                )
+                assert share_response.status_code == 303
+                assert sent_mail and "/invites/shares/" in sent_mail[-1]
+                share_token = sent_mail[-1].rsplit("/invites/shares/", 1)[1].strip().split()[0]
+            finally:
+                app_mail.send_mail = real_send_mail  # type: ignore[assignment]
+                for key, value in old_env.items():
+                    if value is None:
+                        os.environ.pop(key, None)
+                    else:
+                        os.environ[key] = value
+            client.post("/logout", data={"csrf_token": csrf(share_page)}, follow_redirects=False)
+            bob_login_page = client.get("/login")
+            bob_login = client.post(
+                "/login",
+                data={"username": "Bob", "password": "acceptance-bob", "csrf_token": csrf(bob_login_page)},
+                follow_redirects=False,
+            )
+            assert bob_login.status_code == 303
+            accepted_share = client.get(f"/invites/shares/{share_token}", follow_redirects=False)
+            assert accepted_share.status_code == 303
+            bob_after_share = client.get("/api/v1/documents", headers={"Authorization": f"Bearer {bob_token}"})
+            assert any(row["id"] == uploaded_ids[0] for row in bob_after_share.json())
+            bob_delete_page = client.get(f"/documents/{uploaded_ids[0]}")
+            assert f'action="/documents/{uploaded_ids[0]}/delete"' not in bob_delete_page.text
+            bob_download = client.get(f"/documents/{uploaded_ids[0]}/download")
+            assert bob_download.status_code == 200 and b"uniktext alfa" in bob_download.content
+            bob_export = client.get("/export/zip", params={"ids": str(uploaded_ids[0])})
+            assert bob_export.status_code == 200
+            bob_delete = client.post(
+                f"/documents/{uploaded_ids[0]}/delete",
+                data={"csrf_token": csrf(bob_delete_page)},
+                follow_redirects=False,
+            )
+            assert bob_delete.status_code == 404
+            bob_update = client.post(
+                f"/documents/{uploaded_ids[0]}/classification",
+                data={"csrf_token": csrf(bob_delete_page), "template_id": "receipt", "tags": "nope"},
+                follow_redirects=False,
+            )
+            assert bob_update.status_code == 404
+            client.post("/logout", data={"csrf_token": csrf(bob_delete_page)}, follow_redirects=False)
+            david_login_page = client.get("/login")
+            david_login = client.post(
+                "/login",
+                data={"username": "David", "password": "Maj2Fant", "csrf_token": csrf(david_login_page)},
+                follow_redirects=False,
+            )
+            assert david_login.status_code == 303
+            revoke_page = client.get(f"/documents/{uploaded_ids[0]}")
+            revoked = client.post(
+                f"/documents/{uploaded_ids[0]}/share/{bob_id}/revoke",
+                data={"csrf_token": csrf(revoke_page)},
+                follow_redirects=False,
+            )
+            assert revoked.status_code == 303
+            bob_after_revoke = client.get("/api/v1/documents", headers={"Authorization": f"Bearer {bob_token}"})
+            assert all(row["id"] != uploaded_ids[0] for row in bob_after_revoke.json())
+
+            client.post("/logout", data={"csrf_token": csrf(revoke_page)}, follow_redirects=False)
+            admin_login_page = client.get("/login")
+            admin_login = client.post(
+                "/login",
+                data={"username": "admin", "password": "acceptance-12345", "csrf_token": csrf(admin_login_page)},
+                follow_redirects=False,
+            )
+            assert admin_login.status_code == 303
 
             settings_page = client.get("/settings")
             assert settings_page.status_code == 200

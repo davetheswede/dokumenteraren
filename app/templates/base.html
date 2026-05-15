@@ -15,10 +15,19 @@
       {% if user %}
       <nav class="nav">
         <a href="/">Arkiv</a>
+        {% if user["role"] != "admin" %}
         <a href="/upload">Ladda upp</a>
         <a href="/chat">Prata</a>
+        {% endif %}
+        <a href="/activity">Logg</a>
         {% if user["role"] == "admin" %}<a href="/settings">Settings</a>{% endif %}
       </nav>
+      {% if is_impersonating %}
+      <form method="post" action="/impersonation/stop" class="logout">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button class="icon-button" title="Avsluta impersonering">Återgå</button>
+      </form>
+      {% endif %}
       <form method="post" action="/logout" class="logout">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <button class="icon-button" title="Logga ut">Ut</button>
@@ -28,6 +37,9 @@
     <main class="shell">
       {% if transport_warning %}
       <div class="alert error">{{ transport_warning }}</div>
+      {% endif %}
+      {% if is_impersonating %}
+      <div class="alert token">Impersonerar {{ user.username }} som {{ actor.username }}.</div>
       {% endif %}
       {% block content %}{% endblock %}
     </main>

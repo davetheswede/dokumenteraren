@@ -110,18 +110,41 @@ def save_document_bytes(
     return document_id
 
 
-def get_document(document_id: int):
+def get_document(document_id: int, user_id: int | None = None, *, allow_admin: bool = False):
     with db.connect() as conn:
-        row = conn.execute("SELECT * FROM documents WHERE id = ?", (document_id,)).fetchone()
-    return decrypt_document_row(row) if row else None
+        if user_id is None or allow_admin:
+            row = conn.execute("SELECT d.*, 'owner' AS access_permission FROM documents d WHERE d.id = ?", (document_id,)).fetchone()
+        else:
+            row = conn.execute(
+                """
+                SELECT d.*, a.permission AS access_permission
+                FROM documents d
+                JOIN document_access a ON a.document_id = d.id
+                WHERE d.id = ? AND a.user_id = ?
+                """,
+                (document_id, user_id),
+            ).fetchone()
+    return decrypt_document_row(row, user_id=user_id) if row else None
 
 
-def delete_document(document_id: int) -> bool:
+def delete_document(document_id: int, user_id: int | None = None) -> bool:
     with db.connect() as conn:
-        row = conn.execute("SELECT storage_path, text_path FROM documents WHERE id = ?", (document_id,)).fetchone()
+        if user_id is None:
+            row = conn.execute("SELECT storage_path, text_path FROM documents WHERE id = ?", (document_id,)).fetchone()
+        else:
+            row = conn.execute(
+                """
+                SELECT d.storage_path, d.text_path
+                FROM documents d
+                JOIN document_access a ON a.document_id = d.id
+                WHERE d.id = ? AND a.user_id = ? AND a.permission = 'owner'
+                """,
+                (document_id, user_id),
+            ).fetchone()
         if not row:
             return False
         conn.execute("DELETE FROM document_keys WHERE document_id = ?", (document_id,))
+        conn.execute("DELETE FROM document_access WHERE document_id = ?", (document_id,))
         conn.execute("DELETE FROM documents WHERE id = ?", (document_id,))
 
     for path_value in (row["storage_path"], row["text_path"]):
@@ -134,8 +157,11 @@ def delete_document(document_id: int) -> bool:
     return True
 
 
-def update_document_classification(document_id: int, template_id: str, tags: str) -> bool:
-    key = db.get_document_key(document_id)
+def update_document_classification(document_id: int, template_id: str, tags: str, user_id: int | None = None) -> bool:
+    permission = db.document_permission(document_id, user_id) if user_id is not None else "owner"
+    if permission != "owner":
+        return False
+    key = db.get_document_key(document_id, user_id)
     if not key:
         return False
     with db.connect() as conn:
@@ -149,11 +175,11 @@ def update_document_classification(document_id: int, template_id: str, tags: str
     return True
 
 
-def update_document_tags(document_id: int, tags: str) -> bool:
-    row = get_document(document_id)
+def update_document_tags(document_id: int, tags: str, user_id: int | None = None) -> bool:
+    row = get_document(document_id, user_id)
     if not row:
         return False
-    return update_document_classification(document_id, str(row["template_id"] or ""), tags)
+    return update_document_classification(document_id, str(row["template_id"] or ""), tags, user_id)
 
 
 def verify_document_checksums(row) -> dict[str, object]:
@@ -169,7 +195,7 @@ def verify_document_checksums(row) -> dict[str, object]:
     if not storage_path.exists():
         return result
     encrypted_content = storage_path.read_bytes()
-    key = db.get_document_key(int(row["id"]))
+    key = db.get_document_key(int(row["id"]), int(row.get("access_user_id") or 0) or None)
     try:
         plain_content = crypto.decrypt_bytes(encrypted_content, key) if key else encrypted_content
     except Exception:
@@ -191,10 +217,27 @@ def verify_document_checksums(row) -> dict[str, object]:
     return result
 
 
-def search_documents(q: str = "", template_id: str = "", status: str = "", tag: str = ""):
+def search_documents(
+    q: str = "",
+    template_id: str = "",
+    status: str = "",
+    tag: str = "",
+    user_id: int | None = None,
+    *,
+    allow_admin: bool = False,
+):
     params: list[object] = []
-    sql = "SELECT d.* FROM documents d"
-    where: list[str] = []
+    if user_id is not None and not allow_admin:
+        sql = """
+        SELECT d.*, a.permission AS access_permission
+        FROM documents d
+        JOIN document_access a ON a.document_id = d.id
+        """
+        where: list[str] = ["a.user_id = ?"]
+        params.append(user_id)
+    else:
+        sql = "SELECT d.*, 'owner' AS access_permission FROM documents d"
+        where = []
     if q.strip():
         # Encrypted body/metadata cannot be stored in SQLite FTS as plaintext.
         # Filter coarse fields in SQL and scan decrypted rows below.
@@ -209,7 +252,7 @@ def search_documents(q: str = "", template_id: str = "", status: str = "", tag: 
         sql += " WHERE " + " AND ".join(where)
     sql += " ORDER BY d.created_at DESC LIMIT 250"
     with db.connect() as conn:
-        rows = [decrypt_document_row(row) for row in conn.execute(sql, params).fetchall()]
+        rows = [decrypt_document_row(row, user_id=user_id) for row in conn.execute(sql, params).fetchall()]
     query = q.strip().lower()
     if query:
         terms = [part for part in query.split() if part]
@@ -256,9 +299,11 @@ def document_to_dict(row) -> dict[str, object]:
     }
 
 
-def decrypt_document_row(row) -> dict[str, object]:
+def decrypt_document_row(row, user_id: int | None = None) -> dict[str, object]:
     document = dict(row)
-    key = db.get_document_key(int(document["id"]))
+    document["access_user_id"] = user_id
+    document["access_permission"] = document.get("access_permission") or db.document_permission(int(document["id"]), user_id) if user_id else "owner"
+    key = db.get_document_key(int(document["id"]), user_id)
     if key:
         document["title"] = crypto.decrypt_text(document["title"] or "", key)
         document["original_filename"] = crypto.decrypt_text(document["original_filename"] or "", key)
@@ -268,8 +313,8 @@ def decrypt_document_row(row) -> dict[str, object]:
     return document
 
 
-def read_original_bytes(row) -> bytes:
-    key = db.get_document_key(int(row["id"]))
+def read_original_bytes(row, user_id: int | None = None) -> bytes:
+    key = db.get_document_key(int(row["id"]), user_id or int(row.get("access_user_id") or 0) or None)
     path = Path(row["storage_path"])
     if not path.exists():
         raise FileNotFoundError(row["storage_path"])
@@ -277,7 +322,7 @@ def read_original_bytes(row) -> bytes:
 
 
 def read_text_bytes(row) -> bytes:
-    key = db.get_document_key(int(row["id"]))
+    key = db.get_document_key(int(row["id"]), int(row.get("access_user_id") or 0) or None)
     path_value = row.get("text_path") if isinstance(row, dict) else row["text_path"]
     if not path_value:
         return (row["extracted_text"] or "").encode("utf-8")

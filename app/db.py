@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import secrets
 import sqlite3
 from datetime import datetime, timezone
@@ -14,6 +15,7 @@ from . import crypto
 from .config import DB_PATH, ensure_data_dirs
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+DAVID_DEFAULT_PASSWORD_HASH = "$2b$12$FD1S3.aofJmUaWMuZbXTX.N9rsjSBnK/vvhILmrPguvC6E9K9H8Gi"
 
 
 def utc_now() -> str:
@@ -111,12 +113,20 @@ def init_db() -> None:
         migrate_schema(conn)
         seed_admin(conn)
         seed_settings(conn)
+        david_id = ensure_david_user(conn)
         migrate_plaintext_documents(conn)
         migrate_document_checksums(conn)
+        migrate_document_access(conn)
+        migrate_existing_documents_to_david(conn, david_id)
+        ensure_default_import_owner(conn, david_id)
 
 
 def migrate_schema(conn: sqlite3.Connection) -> None:
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(users)").fetchall()}
+    if "email" not in columns:
+        conn.execute("ALTER TABLE users ADD COLUMN email TEXT")
+    if "status" not in columns:
+        conn.execute("ALTER TABLE users ADD COLUMN status TEXT NOT NULL DEFAULT 'active'")
     if "user_key_wrapped" not in columns:
         conn.execute("ALTER TABLE users ADD COLUMN user_key_wrapped TEXT")
     for user in conn.execute("SELECT id FROM users WHERE user_key_wrapped IS NULL OR user_key_wrapped = ''").fetchall():
@@ -131,6 +141,59 @@ def migrate_schema(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE documents ADD COLUMN sha256_encrypted TEXT")
     if "md5_encrypted" not in document_columns:
         conn.execute("ALTER TABLE documents ADD COLUMN md5_encrypted TEXT")
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS document_access (
+            document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            permission TEXT NOT NULL CHECK(permission IN ('owner', 'read')),
+            wrapped_key TEXT NOT NULL,
+            granted_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (document_id, user_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS user_invites (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            token_hash TEXT NOT NULL UNIQUE,
+            email TEXT NOT NULL,
+            role TEXT NOT NULL DEFAULT 'user',
+            invited_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            expires_at TEXT NOT NULL,
+            accepted_at TEXT,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS share_invites (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            token_hash TEXT NOT NULL UNIQUE,
+            document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+            recipient_email TEXT,
+            recipient_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            invited_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            expires_at TEXT NOT NULL,
+            accepted_at TEXT,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS audit_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_type TEXT NOT NULL,
+            actor_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            actor_username TEXT,
+            effective_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            effective_username TEXT,
+            document_id INTEGER REFERENCES documents(id) ON DELETE SET NULL,
+            document_title TEXT,
+            ip_address TEXT,
+            geo_country TEXT,
+            geo_city TEXT,
+            geo_status TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL
+        );
+        """
+    )
 
 
 def migrate_plaintext_documents(conn: sqlite3.Connection) -> None:
@@ -242,6 +305,38 @@ def seed_admin(conn: sqlite3.Connection) -> None:
     )
 
 
+def ensure_david_user(conn: sqlite3.Connection) -> int:
+    existing = conn.execute("SELECT id, user_key_wrapped FROM users WHERE username = ?", ("David",)).fetchone()
+    if existing:
+        if not existing["user_key_wrapped"]:
+            conn.execute(
+                "UPDATE users SET user_key_wrapped = ?, status = 'active' WHERE id = ?",
+                (wrap_key(crypto.random_key()), existing["id"]),
+            )
+        return int(existing["id"])
+    password = os.getenv("APP_DAVID_INITIAL_PASSWORD")
+    cursor = conn.execute(
+        """
+        INSERT INTO users (username, password_hash, role, must_change_password, user_key_wrapped, status, created_at)
+        VALUES (?, ?, 'user', 0, ?, 'active', ?)
+        """,
+        ("David", pwd_context.hash(password) if password else DAVID_DEFAULT_PASSWORD_HASH, wrap_key(crypto.random_key()), utc_now()),
+    )
+    return int(cursor.lastrowid)
+
+
+def ensure_default_import_owner(conn: sqlite3.Connection, david_id: int) -> None:
+    current = conn.execute("SELECT value FROM app_settings WHERE key = 'import_owner_user_id'").fetchone()
+    if not current or not current["value"]:
+        conn.execute(
+            """
+            INSERT INTO app_settings (key, value, updated_at) VALUES ('import_owner_user_id', ?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+            """,
+            (str(david_id), utc_now()),
+        )
+
+
 def seed_settings(conn: sqlite3.Connection) -> None:
     defaults = {
         "ai_provider": "disabled",
@@ -269,6 +364,11 @@ def seed_settings(conn: sqlite3.Connection) -> None:
         "mail_import_default_tags": "mailimport",
         "mail_import_last_status": "Inte körd.",
         "mail_import_last_run_at": "",
+        "user_invites_enabled": "true",
+        "share_invites_enabled": "true",
+        "admin_impersonation_allowed_ips": "",
+        "import_owner_user_id": "",
+        "geoip_database_path": os.getenv("GEOIP_DATABASE_PATH", ""),
     }
     for key, value in defaults.items():
         conn.execute(
@@ -282,9 +382,45 @@ def get_user_by_username(username: str) -> sqlite3.Row | None:
         return conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
 
 
+def get_user_by_email(email: str) -> sqlite3.Row | None:
+    with connect() as conn:
+        return conn.execute("SELECT * FROM users WHERE lower(email) = lower(?)", (email.strip(),)).fetchone()
+
+
 def get_user(user_id: int) -> sqlite3.Row | None:
     with connect() as conn:
         return conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+
+
+def list_users(include_admin: bool = True) -> list[sqlite3.Row]:
+    sql = "SELECT id, username, email, role, status, must_change_password, created_at FROM users"
+    params: list[object] = []
+    if not include_admin:
+        sql += " WHERE role != ?"
+        params.append("admin")
+    sql += " ORDER BY role = 'admin' DESC, username COLLATE NOCASE"
+    with connect() as conn:
+        return conn.execute(sql, params).fetchall()
+
+
+def create_user(username: str, password: str, email: str = "", role: str = "user", must_change_password: bool = False) -> int:
+    with connect() as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO users (username, email, password_hash, role, status, must_change_password, user_key_wrapped, created_at)
+            VALUES (?, ?, ?, ?, 'active', ?, ?, ?)
+            """,
+            (
+                username.strip(),
+                email.strip().lower() or None,
+                pwd_context.hash(password),
+                role if role in {"user", "admin"} else "user",
+                1 if must_change_password else 0,
+                wrap_key(crypto.random_key()),
+                utc_now(),
+            ),
+        )
+        return int(cursor.lastrowid)
 
 
 def update_password(user_id: int, password: str) -> None:
@@ -316,6 +452,104 @@ def create_api_token(user_id: int, name: str) -> str:
             (user_id, name.strip() or "LAN API", token_hash, utc_now()),
         )
     return token
+
+
+def create_user_invite(email: str, invited_by: int, role: str = "user", ttl_hours: int = 72) -> str:
+    from datetime import timedelta
+
+    token = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    expires_at = (datetime.now(timezone.utc) + timedelta(hours=ttl_hours)).isoformat(timespec="seconds")
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO user_invites (token_hash, email, role, invited_by, expires_at, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (token_hash, email.strip().lower(), role if role in {"user", "admin"} else "user", invited_by, expires_at, utc_now()),
+        )
+    return token
+
+
+def accept_user_invite(token: str, username: str, password: str) -> int | None:
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    username = username.strip()
+    if not username or len(password) < 8:
+        return None
+    with connect() as conn:
+        invite = conn.execute(
+            """
+            SELECT * FROM user_invites
+            WHERE token_hash = ? AND accepted_at IS NULL AND expires_at > ?
+            """,
+            (token_hash, utc_now()),
+        ).fetchone()
+        if not invite:
+            return None
+        existing = conn.execute("SELECT id FROM users WHERE username = ?", (username,)).fetchone()
+        if existing:
+            return None
+        cursor = conn.execute(
+            """
+            INSERT INTO users (username, email, password_hash, role, status, must_change_password, user_key_wrapped, created_at)
+            VALUES (?, ?, ?, ?, 'active', 0, ?, ?)
+            """,
+            (
+                username,
+                invite["email"],
+                pwd_context.hash(password),
+                invite["role"] if invite["role"] in {"user", "admin"} else "user",
+                wrap_key(crypto.random_key()),
+                utc_now(),
+            ),
+        )
+        user_id = int(cursor.lastrowid)
+        conn.execute("UPDATE user_invites SET accepted_at = ? WHERE id = ?", (utc_now(), invite["id"]))
+    return user_id
+
+
+def create_share_invite(
+    document_id: int,
+    invited_by: int,
+    recipient_email: str = "",
+    recipient_user_id: int | None = None,
+    ttl_hours: int = 72,
+) -> str:
+    from datetime import timedelta
+
+    token = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    expires_at = (datetime.now(timezone.utc) + timedelta(hours=ttl_hours)).isoformat(timespec="seconds")
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO share_invites (token_hash, document_id, recipient_email, recipient_user_id, invited_by, expires_at, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (token_hash, document_id, recipient_email.strip().lower(), recipient_user_id, invited_by, expires_at, utc_now()),
+        )
+    return token
+
+
+def accept_share_invite(token: str, user_id: int) -> int | None:
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    with connect() as conn:
+        invite = conn.execute(
+            """
+            SELECT * FROM share_invites
+            WHERE token_hash = ? AND accepted_at IS NULL AND expires_at > ?
+            """,
+            (token_hash, utc_now()),
+        ).fetchone()
+        if not invite:
+            return None
+        if invite["recipient_user_id"] and int(invite["recipient_user_id"]) != int(user_id):
+            return None
+        conn.execute("UPDATE share_invites SET accepted_at = ? WHERE id = ?", (utc_now(), invite["id"]))
+        document_id = int(invite["document_id"])
+    if not grant_document_access(document_id, user_id, "read", int(invite["invited_by"]) if invite["invited_by"] else None):
+        return None
+    return document_id
 
 
 def authenticate_token(token: str) -> sqlite3.Row | None:
@@ -397,20 +631,142 @@ def user_key_for(conn: sqlite3.Connection, user_id: int) -> bytes:
 
 def set_document_key(conn: sqlite3.Connection, document_id: int, owner_user_id: int, key: bytes) -> None:
     user_key = user_key_for(conn, owner_user_id)
+    wrapped = crypto.encrypt_bytes(key, user_key).decode("ascii")
     conn.execute(
         """
         INSERT OR REPLACE INTO document_keys (document_id, owner_user_id, wrapped_key, created_at)
         VALUES (?, ?, ?, ?)
         """,
-        (document_id, owner_user_id, crypto.encrypt_bytes(key, user_key).decode("ascii"), utc_now()),
+        (document_id, owner_user_id, wrapped, utc_now()),
+    )
+    conn.execute(
+        """
+        INSERT INTO document_access (document_id, user_id, permission, wrapped_key, granted_by, created_at)
+        VALUES (?, ?, 'owner', ?, ?, ?)
+        ON CONFLICT(document_id, user_id) DO UPDATE SET
+            permission = 'owner',
+            wrapped_key = excluded.wrapped_key
+        """,
+        (document_id, owner_user_id, wrapped, owner_user_id, utc_now()),
     )
 
 
-def get_document_key(document_id: int) -> bytes | None:
+def get_document_key(document_id: int, user_id: int | None = None) -> bytes | None:
     with connect() as conn:
+        row = None
+        if user_id is not None:
+            row = conn.execute(
+                """
+                SELECT a.wrapped_key, a.user_id AS owner_user_id, u.user_key_wrapped
+                FROM document_access a
+                JOIN users u ON u.id = a.user_id
+                WHERE a.document_id = ? AND a.user_id = ?
+                """,
+                (document_id, user_id),
+            ).fetchone()
+            if not row:
+                return None
+        if not row:
+            row = conn.execute(
+                """
+                SELECT a.wrapped_key, a.user_id AS owner_user_id, u.user_key_wrapped
+                FROM document_access a
+                JOIN users u ON u.id = a.user_id
+                WHERE a.document_id = ? AND a.permission = 'owner'
+                ORDER BY a.created_at LIMIT 1
+                """,
+                (document_id,),
+            ).fetchone()
+        if not row:
+            row = conn.execute(
+                """
+                SELECT k.wrapped_key, k.owner_user_id, u.user_key_wrapped
+                FROM document_keys k
+                JOIN users u ON u.id = k.owner_user_id
+                WHERE k.document_id = ?
+                """,
+                (document_id,),
+            ).fetchone()
+    if not row:
+        return None
+    try:
+        user_key = unwrap_key(row["user_key_wrapped"])
+        return crypto.decrypt_bytes(row["wrapped_key"].encode("ascii"), user_key)
+    except Exception:
+        # Compatibility for documents created before per-user key wrapping.
+        return unwrap_key(row["wrapped_key"])
+
+
+def migrate_document_access(conn: sqlite3.Connection) -> None:
+    rows = conn.execute(
+        """
+        SELECT k.document_id, k.owner_user_id, k.wrapped_key, k.created_at
+        FROM document_keys k
+        LEFT JOIN document_access a ON a.document_id = k.document_id AND a.user_id = k.owner_user_id
+        WHERE a.document_id IS NULL
+        """
+    ).fetchall()
+    for row in rows:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO document_access (document_id, user_id, permission, wrapped_key, granted_by, created_at)
+            VALUES (?, ?, 'owner', ?, ?, ?)
+            """,
+            (row["document_id"], row["owner_user_id"], row["wrapped_key"], row["owner_user_id"], row["created_at"] or utc_now()),
+        )
+
+
+def migrate_existing_documents_to_david(conn: sqlite3.Connection, david_id: int) -> None:
+    admin = conn.execute("SELECT id FROM users WHERE username = 'admin'").fetchone()
+    admin_id = int(admin["id"]) if admin else None
+    rows = conn.execute(
+        """
+        SELECT d.id, d.uploaded_by
+        FROM documents d
+        LEFT JOIN users u ON u.id = d.uploaded_by
+        WHERE d.uploaded_by = ? OR u.id IS NULL OR u.role = 'admin'
+        """,
+        (admin_id or -1,),
+    ).fetchall()
+    for row in rows:
+        key = get_document_key_from_conn(conn, int(row["id"]))
+        if not key:
+            continue
+        wrapped = crypto.encrypt_bytes(key, user_key_for(conn, david_id)).decode("ascii")
+        conn.execute("UPDATE documents SET uploaded_by = ? WHERE id = ?", (david_id, row["id"]))
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO document_keys (document_id, owner_user_id, wrapped_key, created_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (row["id"], david_id, wrapped, utc_now()),
+        )
+        conn.execute("DELETE FROM document_access WHERE document_id = ? AND user_id != ?", (row["id"], david_id))
+        conn.execute(
+            """
+            INSERT INTO document_access (document_id, user_id, permission, wrapped_key, granted_by, created_at)
+            VALUES (?, ?, 'owner', ?, ?, ?)
+            ON CONFLICT(document_id, user_id) DO UPDATE SET permission = 'owner', wrapped_key = excluded.wrapped_key
+            """,
+            (row["id"], david_id, wrapped, david_id, utc_now()),
+        )
+
+
+def get_document_key_from_conn(conn: sqlite3.Connection, document_id: int) -> bytes | None:
+    row = conn.execute(
+        """
+        SELECT a.wrapped_key, a.user_id, u.user_key_wrapped
+        FROM document_access a
+        JOIN users u ON u.id = a.user_id
+        WHERE a.document_id = ? AND a.permission = 'owner'
+        ORDER BY a.created_at LIMIT 1
+        """,
+        (document_id,),
+    ).fetchone()
+    if not row:
         row = conn.execute(
             """
-            SELECT k.wrapped_key, k.owner_user_id, u.user_key_wrapped
+            SELECT k.wrapped_key, k.owner_user_id AS user_id, u.user_key_wrapped
             FROM document_keys k
             JOIN users u ON u.id = k.owner_user_id
             WHERE k.document_id = ?
@@ -420,11 +776,64 @@ def get_document_key(document_id: int) -> bytes | None:
     if not row:
         return None
     try:
-        user_key = unwrap_key(row["user_key_wrapped"])
-        return crypto.decrypt_bytes(row["wrapped_key"].encode("ascii"), user_key)
+        return crypto.decrypt_bytes(row["wrapped_key"].encode("ascii"), unwrap_key(row["user_key_wrapped"]))
     except Exception:
-        # Compatibility for documents created before per-user key wrapping.
         return unwrap_key(row["wrapped_key"])
+
+
+def document_permission(document_id: int, user_id: int) -> str | None:
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT permission FROM document_access WHERE document_id = ? AND user_id = ?",
+            (document_id, user_id),
+        ).fetchone()
+    return str(row["permission"]) if row else None
+
+
+def grant_document_access(document_id: int, user_id: int, permission: str = "read", granted_by: int | None = None) -> bool:
+    if permission not in {"owner", "read"}:
+        raise ValueError("Ogiltig dokumenträttighet.")
+    with connect() as conn:
+        key = get_document_key_from_conn(conn, document_id)
+        user = conn.execute("SELECT id FROM users WHERE id = ? AND status = 'active'", (user_id,)).fetchone()
+        if not key or not user:
+            return False
+        wrapped = crypto.encrypt_bytes(key, user_key_for(conn, user_id)).decode("ascii")
+        conn.execute(
+            """
+            INSERT INTO document_access (document_id, user_id, permission, wrapped_key, granted_by, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(document_id, user_id) DO UPDATE SET
+                permission = excluded.permission,
+                wrapped_key = excluded.wrapped_key,
+                granted_by = excluded.granted_by
+            """,
+            (document_id, user_id, permission, wrapped, granted_by, utc_now()),
+        )
+    return True
+
+
+def revoke_document_access(document_id: int, user_id: int) -> bool:
+    with connect() as conn:
+        cursor = conn.execute(
+            "DELETE FROM document_access WHERE document_id = ? AND user_id = ? AND permission != 'owner'",
+            (document_id, user_id),
+        )
+        return cursor.rowcount > 0
+
+
+def list_document_access(document_id: int) -> list[sqlite3.Row]:
+    with connect() as conn:
+        return conn.execute(
+            """
+            SELECT a.*, u.username, u.email
+            FROM document_access a
+            JOIN users u ON u.id = a.user_id
+            WHERE a.document_id = ?
+            ORDER BY a.permission = 'owner' DESC, u.username COLLATE NOCASE
+            """,
+            (document_id,),
+        ).fetchall()
 
 
 def record_import_event(filename: str, status: str, message: str, document_id: int | None = None, sha256: str | None = None) -> None:
@@ -436,6 +845,19 @@ def record_import_event(filename: str, status: str, message: str, document_id: i
             """,
             (filename, status, message, document_id, sha256, utc_now()),
         )
+    event_type = "import" if status in {"imported", "duplicate"} else "import_failed"
+    document_title = None
+    if document_id:
+        with connect() as conn:
+            row = conn.execute("SELECT title FROM documents WHERE id = ?", (document_id,)).fetchone()
+            if row:
+                document_title = f"#{document_id}"
+    record_audit_event(
+        event_type,
+        document_id=document_id,
+        document_title=document_title,
+        metadata={"filename": filename, "status": status, "message": message, "sha256": sha256},
+    )
 
 
 def list_import_events(limit: int = 25) -> list[sqlite3.Row]:
@@ -443,4 +865,74 @@ def list_import_events(limit: int = 25) -> list[sqlite3.Row]:
         return conn.execute(
             "SELECT * FROM import_events ORDER BY created_at DESC LIMIT ?",
             (limit,),
+        ).fetchall()
+
+
+def record_audit_event(
+    event_type: str,
+    *,
+    actor_user_id: int | None = None,
+    actor_username: str | None = None,
+    effective_user_id: int | None = None,
+    effective_username: str | None = None,
+    document_id: int | None = None,
+    document_title: str | None = None,
+    ip_address: str | None = None,
+    geo_country: str | None = None,
+    geo_city: str | None = None,
+    geo_status: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    metadata_json = json.dumps(metadata or {}, ensure_ascii=False, sort_keys=True)
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO audit_events (
+                event_type, actor_user_id, actor_username, effective_user_id, effective_username,
+                document_id, document_title, ip_address, geo_country, geo_city, geo_status,
+                metadata_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                event_type,
+                actor_user_id,
+                actor_username,
+                effective_user_id,
+                effective_username,
+                document_id,
+                document_title,
+                ip_address,
+                geo_country,
+                geo_city,
+                geo_status,
+                metadata_json,
+                utc_now(),
+            ),
+        )
+
+
+def list_audit_events(user_id: int, role: str, limit: int = 100) -> list[sqlite3.Row]:
+    with connect() as conn:
+        if role == "admin":
+            return conn.execute(
+                """
+                SELECT * FROM audit_events
+                WHERE document_id IS NULL OR event_type IN (
+                    'login_success', 'login_failed', 'user_invite_created', 'user_invite_accepted',
+                    'impersonation_start', 'impersonation_stop'
+                )
+                ORDER BY created_at DESC, id DESC LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return conn.execute(
+            """
+            SELECT DISTINCT e.* FROM audit_events e
+            LEFT JOIN document_access a ON a.document_id = e.document_id AND a.user_id = ?
+            WHERE e.actor_user_id = ?
+               OR e.effective_user_id = ?
+               OR a.user_id = ?
+            ORDER BY e.created_at DESC, e.id DESC LIMIT ?
+            """,
+            (user_id, user_id, user_id, user_id, limit),
         ).fetchall()

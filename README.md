@@ -39,6 +39,9 @@ Tanken är inte att vinna på flest features, utan på att vara lätt att först
 - Dokumentarkiv med upload, sök, taggar, mallar och permanent radering.
 - Mallar för försäkringar, bank, kredit, juridik, kvitton, teknik och lösenordsrelaterade dokument.
 - Import via webb, importmapp, API, CLI, POP3 och IMAP.
+- Flera användare med isolerade dokumentytor, e-postbaserade inbjudningar och delad läsrätt till utvalda dokument.
+- Auditlogg för inloggningar, importer, raderingar, nedladdningar och exporter, med särskilda loginhändelser och GeoIP-status.
+- Separat fail2ban-logg för misslyckade inloggningar.
 - Automatisk mallgissning och taggning för importerade filer.
 - Export som JSON, CSV och ZIP.
 - AI-chat mot valda dokument via OpenAI, Claude eller Ollama.
@@ -60,6 +63,11 @@ Tanken är inte att vinna på flest features, utan på att vara lätt att först
 - AI-anrop sker först när du aktivt valt provider och testat anslutningen.
 - Redaktion är på som standard innan dokumenttext skickas till en extern AI-provider.
 - API-token visas en gång och ska behandlas som ett lösenord.
+- Admin administrerar användare och systeminställningar men har inte direkt filåtkomst; support sker via IP-gated impersonering.
+- Flera användare har isolerade dokumentytor. Befintliga adminägda dokument migreras till användaren `David` vid uppstart.
+- Dokumentägare kan dela dokument via e-postinbjudan när SMTP är konfigurerat.
+- Auditloggen visar inloggningar med IP/GeoIP-status samt import, radering, nedladdning och export.
+- Misslyckade inloggningar skrivs även till `/data/logs/fail2ban-auth.log`; exempel finns i `fail2ban/` och [Fail2ban-wikin](docs/wiki/Fail2ban.md).
 
 Den viktigaste säkerhetsmodellen är ändå driften: kör bakom HTTPS, använd starka hemligheter, backa upp `./data`, exponera inte appen rakt mot internet utan extra skydd.
 
@@ -99,6 +107,16 @@ Installationsguide, backup, importflöden, API och AI-konfiguration ligger i wik
 - [Data, Backup och Säkerhet](https://github.com/davetheswede/dokumenteraren/wiki/Data-Backup-och-Sakerhet)
 - [Import, API och CLI](https://github.com/davetheswede/dokumenteraren/wiki/Import-API-och-CLI)
 - [AI-stöd](https://github.com/davetheswede/dokumenteraren/wiki/AI-stod)
+- [Fail2ban](https://github.com/davetheswede/dokumenteraren/wiki/Fail2ban)
+
+## Multi-user Och Loggar
+
+Första multi-user-starten säkerställer användaren `David` och flyttar befintliga admin/importägda dokument till den användaren. Sätt `APP_DAVID_INITIAL_PASSWORD` före första boot om du vill ersätta projektets initialvärde.
+
+Nya användare och dokumentdelningar skickas som e-postinbjudningar och kräver SMTP-env. Om SMTP saknas är inbjudningsknapparna blockerade. Importer kräver en aktiv icke-admin importägare, valbar i Settings.
+
+Misslyckade inloggningar skrivs till `/data/logs/fail2ban-auth.log`. Exempel för filter och jail ligger under `fail2ban/` och instruktioner finns i wikin.
+- [Fail2ban](https://github.com/davetheswede/dokumenteraren/wiki/Fail2ban)
 
 ## Licens
 

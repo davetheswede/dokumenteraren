@@ -21,6 +21,8 @@ Lägg filer i:
 
 Appen scannar katalogen vid start och periodiskt. En fil importeras när storlek och mtime är stabila över två scan, eller när en `.ready`-markör finns.
 
+I multi-user-läge måste import ha en aktiv icke-admin importägare. Välj importägare under `Settings`; vid första migrering sätts `David` som standard om ingen annan vanlig användare finns vald. Om importägare saknas stoppas importen och händelsen loggas i import- och auditloggen.
+
 ## Mailimport
 
 Mailimporten är en klient, inte en e-postserver.
@@ -38,6 +40,8 @@ Beteende:
 ## LAN API
 
 Skapa en API-token under `Settings`. Token visas en gång.
+
+API-token följer samma dokumentisolering som webbgränssnittet. En admin-token ger inte direkt filåtkomst till användarnas dokument.
 
 Lista dokument:
 

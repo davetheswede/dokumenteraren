@@ -26,7 +26,7 @@ COPY app ./app
 COPY scripts ./scripts
 COPY README.md .
 
-RUN mkdir -p /data/uploads /data/derived /data/exports /data/import_failed /data/keys /data/indexes /import
+RUN mkdir -p /data/uploads /data/derived /data/exports /data/import_failed /data/keys /data/indexes /data/logs /import
 
 EXPOSE 12006
 

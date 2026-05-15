@@ -13,6 +13,48 @@
 
 <section class="settings-grid">
   <article class="work-panel">
+    <h2>Användare</h2>
+    <p class="muted">Aktuell IP: <code>{{ current_ip }}</code>. Impersonering: {% if impersonation_allowed %}tillåten{% else %}blockerad{% endif %}.</p>
+    {% if user_invites_active %}
+    <form method="post" action="/settings/users/invite" class="inline-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input name="email" type="email" placeholder="ny-anvandare@example.com" required>
+      <button>Skicka användarinbjudan</button>
+    </form>
+    {% else %}
+    <p class="muted">Användarinbjudningar kräver SMTP-konfiguration.</p>
+    {% endif %}
+    <table>
+      <thead><tr><th>Användare</th><th>E-post</th><th>Roll</th><th>Status</th><th>Support</th></tr></thead>
+      <tbody>
+        {% for row in users %}
+        <tr>
+          <td>{{ row.username }}</td>
+          <td>{{ row.email or "-" }}</td>
+          <td>{{ row.role }}</td>
+          <td>{{ row.status }}</td>
+          <td>
+            {% if row.role != "admin" and impersonation_allowed %}
+            <form method="post" action="/settings/impersonate/{{ row.id }}" class="inline-form">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <button>Impersonera</button>
+            </form>
+            {% else %}-{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <form method="post" action="/settings/impersonation" class="form-stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>Godkända IP/CIDR för impersonering
+        <textarea name="admin_impersonation_allowed_ips" rows="3" placeholder="{{ current_ip }}">{{ settings.admin_impersonation_allowed_ips }}</textarea>
+      </label>
+      <button>Spara allowlist</button>
+    </form>
+  </article>
+
+  <article class="work-panel">
     <h2>AI-provider</h2>
     <form method="post" action="/settings/ai" class="form-grid">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -76,6 +118,17 @@
         <button>Kör poll nu</button>
       </form>
     </div>
+    <form method="post" action="/settings/import-owner" class="form-stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>Importägare
+        <select name="import_owner_user_id">
+          {% for row in normal_users %}
+          <option value="{{ row.id }}" {% if settings.import_owner_user_id == row.id|string %}selected{% endif %}>{{ row.username }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <button>Spara importägare</button>
+    </form>
   </article>
 
   <article class="work-panel">

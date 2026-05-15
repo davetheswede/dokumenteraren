@@ -12,6 +12,7 @@ Den innehåller:
 - `exports/` med krypterade exportartefakter
 - `import_failed/` med krypterad quarantine
 - `keys/` med installationsnyckel om ingen master key satts via env
+- `logs/` med driftloggar, inklusive fail2ban-loggen
 
 Backa normalt inte upp `./import`. Den katalogen är till för inkommande filer innan appen importerat och krypterat dem.
 
@@ -33,6 +34,12 @@ Byggstenar:
 - tvingat byte av första adminlösenord
 - CSRF-skydd på formulär
 - bearer token för LAN API
+- isolerade dokumentytor per vanlig användare
+- explicit delad läsrätt via accepterade inbjudningar
+- admin utan direkt filåtkomst i adminläge
+- IP-gated adminimpersonering för support
+- auditlogg med särskilda loginhändelser, IP och GeoIP-status
+- separat fail2ban-logg som inte visas i UI
 - säker filnamnshantering
 - extension allowlist
 - kryptering av dokument och extraherad text

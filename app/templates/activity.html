@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Logg · dokumenteraren{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <p class="eyebrow">Audit</p>
+    <h1>Logg</h1>
+  </div>
+</section>
+
+<section class="table-panel">
+  {% if events %}
+  <table>
+    <thead><tr><th>Tid</th><th>Typ</th><th>Användare</th><th>IP</th><th>GeoIP</th><th>Dokument</th></tr></thead>
+    <tbody>
+      {% for event in events %}
+      <tr>
+        <td>{{ event.created_at[:19] }}</td>
+        <td><span class="pill {{ 'indexed' if event.event_type.startswith('login_success') else 'archived_only' }}">{{ event.event_type }}</span></td>
+        <td>{{ event.effective_username or event.actor_username or "-" }}</td>
+        <td>{{ event.ip_address or "-" }}</td>
+        <td>{{ event.geo_status or "-" }}{% if event.geo_country %} · {{ event.geo_country }}{% endif %}{% if event.geo_city %} · {{ event.geo_city }}{% endif %}</td>
+        <td>{% if event.document_id %}#{{ event.document_id }} {{ event.document_title or "" }}{% else %}-{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty">Inga logghändelser än.</div>
+  {% endif %}
+</section>
+{% endblock %}

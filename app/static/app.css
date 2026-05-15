@@ -235,6 +235,19 @@ label {
   border-top: 1px solid #efb4bd;
 }
 
+.share-box {
+  display: grid;
+  gap: 12px;
+  margin: 22px 0;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.share-box h2,
+.share-box p {
+  margin: 0;
+}
+
 .danger-zone h2,
 .danger-zone p,
 .danger-zone form {

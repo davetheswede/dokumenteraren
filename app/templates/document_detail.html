@@ -9,10 +9,12 @@
   <div class="actions">
     <a class="button" href="/documents/{{ document.id }}/download">Original</a>
     <a class="button" href="/export/zip?ids={{ document.id }}">ZIP</a>
+    {% if document.access_permission == "owner" %}
     <form method="post" action="/documents/{{ document.id }}/delete" onsubmit="return confirm('Radera dokumentet permanent?');">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <button class="danger">Radera</button>
     </form>
+    {% endif %}
   </div>
 </section>
 {% if message %}<div class="alert success">{{ message }}</div>{% endif %}
@@ -35,7 +37,9 @@
       <dt>MIME</dt><dd>{{ document.mime_type }}</dd>
       <dt>Mall</dt><dd>{{ template_by_id.get(document.template_id, {}).get("name", "Ingen") }}</dd>
       <dt>Taggar</dt><dd>{{ document.tags or "-" }}</dd>
+      <dt>Rättighet</dt><dd>{{ "Ägare" if document.access_permission == "owner" else "Delad läsrätt" }}</dd>
     </dl>
+    {% if document.access_permission == "owner" %}
     <form method="post" action="/documents/{{ document.id }}/classification" class="tag-form">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <label>Redigera mall
@@ -51,6 +55,32 @@
       </label>
       <button class="primary">Spara mall och taggar</button>
     </form>
+    <section class="share-box">
+      <h2>Delning</h2>
+      {% if share_invites_active %}
+      <form method="post" action="/documents/{{ document.id }}/share" class="form-stack">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label>Mottagarens e-post
+          <input name="recipient_email" type="email" placeholder="person@example.com">
+        </label>
+        <button class="primary">Skicka delningsinbjudan</button>
+      </form>
+      {% else %}
+      <p class="muted">Delningsinbjudningar kräver SMTP-konfiguration.</p>
+      {% endif %}
+      <div class="event-list">
+        {% for entry in access_entries %}
+          <p><strong>{{ entry.permission }}</strong> · {{ entry.username }}{% if entry.email %} · {{ entry.email }}{% endif %}
+          {% if entry.permission != "owner" %}
+          <form method="post" action="/documents/{{ document.id }}/share/{{ entry.user_id }}/revoke" class="inline-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button>Återkalla</button>
+          </form>
+          {% endif %}
+          </p>
+        {% endfor %}
+      </div>
+    </section>
     <div class="danger-zone">
       <h2>Radera</h2>
       <p class="muted">Tar bort dokumentet och de krypterade filerna permanent.</p>
@@ -59,6 +89,7 @@
         <button class="danger">Radera dokument</button>
       </form>
     </div>
+    {% endif %}
     <h2>Extraherat</h2>
     <pre class="metadata">{{ metadata | tojson(indent=2) }}</pre>
   </aside>

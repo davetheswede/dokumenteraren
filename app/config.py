@@ -9,11 +9,13 @@ DATA_DIR = Path(os.getenv("DATA_DIR", "./data")).resolve()
 UPLOAD_DIR = DATA_DIR / "uploads"
 DERIVED_DIR = DATA_DIR / "derived"
 EXPORT_DIR = DATA_DIR / "exports"
+LOG_DIR = DATA_DIR / "logs"
 IMPORT_DIR = Path(os.getenv("IMPORT_DIR", "./import")).resolve()
 IMPORT_FAILED_DIR = DATA_DIR / "import_failed"
 KEYS_DIR = DATA_DIR / "keys"
 INDEX_DIR = DATA_DIR / "indexes"
 DB_PATH = DATA_DIR / "app.db"
+FAIL2BAN_AUTH_LOG = Path(os.getenv("FAIL2BAN_AUTH_LOG", str(LOG_DIR / "fail2ban-auth.log"))).resolve()
 
 MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(50 * 1024 * 1024)))
 SESSION_SECRET = os.getenv("SESSION_SECRET") or os.getenv("APP_SECRET_KEY") or "dev-change-me"
@@ -78,7 +80,7 @@ ALLOWED_EXTENSIONS = {
 
 
 def ensure_data_dirs() -> None:
-    for path in (DATA_DIR, UPLOAD_DIR, DERIVED_DIR, EXPORT_DIR, IMPORT_DIR, IMPORT_FAILED_DIR, KEYS_DIR, INDEX_DIR):
+    for path in (DATA_DIR, UPLOAD_DIR, DERIVED_DIR, EXPORT_DIR, IMPORT_DIR, IMPORT_FAILED_DIR, KEYS_DIR, INDEX_DIR, LOG_DIR):
         path.mkdir(parents=True, exist_ok=True)
     try:
         IMPORT_DIR.chmod(0o777)

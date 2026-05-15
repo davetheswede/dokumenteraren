@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Acceptera inbjudan · dokumenteraren{% endblock %}
+{% block content %}
+<section class="auth-panel">
+  <p class="eyebrow">Inbjudan</p>
+  <h1>Skapa konto</h1>
+  {% if error %}<div class="alert error">{{ error }}</div>{% endif %}
+  <form method="post" class="form-stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>Användarnamn <input name="username" required></label>
+    <label>Lösenord <input name="password" type="password" minlength="8" required></label>
+    <button class="primary">Aktivera konto</button>
+  </form>
+</section>
+{% endblock %}

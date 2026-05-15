@@ -6,12 +6,14 @@
     <p class="eyebrow">Arkiv</p>
     <h1>Dokument</h1>
   </div>
+  {% if user["role"] != "admin" %}
   <div class="actions">
     <a class="button" href="/export/metadata.csv">CSV</a>
     <a class="button" href="/export/metadata.json">JSON</a>
     <a class="button" href="/export/zip">ZIP</a>
     <a class="primary link-button" href="/upload">Ladda upp</a>
   </div>
+  {% endif %}
 </section>
 
 {% if message %}<div class="alert success">{{ message }}</div>{% endif %}
@@ -63,7 +65,7 @@
       </tbody>
     </table>
     {% else %}
-    <div class="empty">Inga dokument matchar filtren.</div>
+    <div class="empty">{% if user["role"] == "admin" %}Adminläget har inte direkt filåtkomst. Välj användare i Settings och impersonera från godkänd IP vid behov.{% else %}Inga dokument matchar filtren.{% endif %}</div>
     {% endif %}
   </div>
   <aside class="side-panel">
