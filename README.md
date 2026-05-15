@@ -116,7 +116,6 @@ Första multi-user-starten säkerställer användaren `David` och flyttar befint
 Nya användare och dokumentdelningar skickas som e-postinbjudningar och kräver SMTP-env. Om SMTP saknas är inbjudningsknapparna blockerade. Importer kräver en aktiv icke-admin importägare, valbar i Settings.
 
 Misslyckade inloggningar skrivs till `/data/logs/fail2ban-auth.log`. Exempel för filter och jail ligger under `fail2ban/` och instruktioner finns i wikin.
-- [Fail2ban](https://github.com/davetheswede/dokumenteraren/wiki/Fail2ban)
 
 ## Licens
 
