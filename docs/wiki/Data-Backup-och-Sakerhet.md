@@ -37,6 +37,7 @@ Byggstenar:
 - isolerade dokumentytor per vanlig användare
 - explicit delad läsrätt via accepterade inbjudningar
 - admin utan direkt filåtkomst i adminläge
+- manuell adminreset via Docker-CLI, inte via webben
 - IP-gated adminimpersonering för support
 - auditlogg med särskilda loginhändelser, IP och GeoIP-status
 - separat fail2ban-logg som inte visas i UI

@@ -6,6 +6,7 @@ import json
 import os
 import posixpath
 import re
+import subprocess
 import sys
 import tempfile
 import zipfile
@@ -303,6 +304,36 @@ def main() -> None:
             assert stopped.status_code == 303
             logged_out_admin = client.post("/logout", data={"csrf_token": csrf(client.get('/settings'))}, follow_redirects=False)
             assert logged_out_admin.status_code == 303
+            reset_cli = subprocess.run(
+                [sys.executable, "scripts/reset_admin_password.py", "--password-stdin"],
+                input="cli-reset-admin\n",
+                text=True,
+                cwd=PROJECT_ROOT,
+                capture_output=True,
+                check=False,
+            )
+            assert reset_cli.returncode == 0, reset_cli.stderr
+            assert db.verify_password("cli-reset-admin", db.get_user_by_username("admin")["password_hash"])
+            cli_login_page = client.get("/login")
+            cli_login = client.post(
+                "/login",
+                data={"username": "admin", "password": "cli-reset-admin", "csrf_token": csrf(cli_login_page)},
+                follow_redirects=False,
+            )
+            assert cli_login.status_code == 303 and cli_login.headers["location"] == "/change-password"
+            cli_change_page = client.get("/change-password")
+            cli_changed = client.post(
+                "/change-password",
+                data={
+                    "current_password": "cli-reset-admin",
+                    "new_password": "acceptance-12345",
+                    "confirm_password": "acceptance-12345",
+                    "csrf_token": csrf(cli_change_page),
+                },
+                follow_redirects=False,
+            )
+            assert cli_changed.status_code == 303
+            client.post("/logout", data={"csrf_token": csrf(client.get('/'))}, follow_redirects=False)
             user_login_page = client.get("/login")
             user_login = client.post(
                 "/login",

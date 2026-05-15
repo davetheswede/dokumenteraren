@@ -25,6 +25,25 @@ Appen kräver lösenordsbyte innan arkivet kan användas.
 
 Efter första setup kan admin skapa användare manuellt med tillfälligt lösenord. Användaren måste byta lösenordet vid första inloggning. Om SMTP-env är satt kan admin även skicka inbjudnings- och lösenordsresetlänkar där mottagaren sätter sitt eget lösenord.
 
+## Nollställ Adminlösenord Via CLI
+
+Om adminkontots lösenord tappas bort finns ett manuellt CLI-verktyg i Docker-imagen. Det körs från hosten mot containern och skapar ett nytt temporärt adminlösenord. Det här finns inte som webbfunktion.
+
+Interaktivt:
+
+```bash
+docker compose exec dokumenteraren python scripts/reset_admin_password.py
+```
+
+För automation:
+
+```bash
+printf '%s\n' 'nytt-langt-temporart-losenord' \
+  | docker compose exec -T dokumenteraren python scripts/reset_admin_password.py --password-stdin
+```
+
+Efter reset måste `admin` logga in med det temporära lösenordet och välja ett nytt lösenord innan arkivet kan användas.
+
 ## Viktiga Miljövariabler
 
 ```env

@@ -451,6 +451,36 @@ def set_temporary_password(user_id: int, password: str) -> bool:
     return True
 
 
+def reset_admin_password(password: str, *, must_change_password: bool = True) -> bool:
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT id, user_key_wrapped FROM users WHERE username = ? AND role = 'admin'",
+            ("admin",),
+        ).fetchone()
+        if not row:
+            return False
+        if row["user_key_wrapped"]:
+            wrapped_key = wrap_key(unwrap_key(row["user_key_wrapped"]))
+        else:
+            wrapped_key = wrap_key(crypto.random_key())
+        conn.execute(
+            "UPDATE users SET password_hash = ?, must_change_password = ?, user_key_wrapped = ?, status = 'active' WHERE id = ?",
+            (pwd_context.hash(password), 1 if must_change_password else 0, wrapped_key, row["id"]),
+        )
+        conn.execute(
+            "UPDATE password_resets SET used_at = ? WHERE user_id = ? AND used_at IS NULL",
+            (utc_now(), row["id"]),
+        )
+    record_audit_event(
+        "admin_password_reset_cli",
+        actor_username="cli",
+        effective_user_id=int(row["id"]),
+        effective_username="admin",
+        metadata={"must_change_password": must_change_password},
+    )
+    return True
+
+
 def verify_password(password: str, password_hash: str) -> bool:
     return pwd_context.verify(password, password_hash)
 
@@ -949,7 +979,7 @@ def list_audit_events(user_id: int, role: str, limit: int = 100) -> list[sqlite3
                 WHERE document_id IS NULL OR event_type IN (
                     'login_success', 'login_failed', 'user_invite_created', 'user_invite_accepted',
                     'user_created_manual', 'user_temporary_password_set', 'password_reset_created',
-                    'password_reset_accepted', 'impersonation_start', 'impersonation_stop'
+                    'password_reset_accepted', 'admin_password_reset_cli', 'impersonation_start', 'impersonation_stop'
                 )
                 ORDER BY created_at DESC, id DESC LIMIT ?
                 """,

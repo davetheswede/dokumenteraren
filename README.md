@@ -66,6 +66,7 @@ Tanken är inte att vinna på flest features, utan på att vara lätt att först
 - Admin administrerar användare och systeminställningar men har inte direkt filåtkomst; support sker via IP-gated impersonering.
 - Flera användare har isolerade dokumentytor.
 - Admin kan skapa användare manuellt med tillfälligt lösenord eller skicka inbjudnings-/resetlänkar när SMTP är konfigurerat.
+- Adminlösenord kan nollställas manuellt via CLI inne i Docker-containern; det finns ingen webbrutt för adminreset.
 - Dokumentägare kan dela dokument via e-postinbjudan när SMTP är konfigurerat.
 - Auditloggen visar inloggningar med IP/GeoIP-status samt import, radering, nedladdning och export.
 - Misslyckade inloggningar skrivs även till `/data/logs/fail2ban-auth.log`; exempel finns i `fail2ban/` och [Fail2ban-wikin](docs/wiki/Fail2ban.md).
@@ -115,6 +116,19 @@ Installationsguide, backup, importflöden, API och AI-konfiguration ligger i wik
 Appen levereras med adminkontot `admin`. Vid första inloggning krävs lösenordsbyte innan arkivet kan användas. Efter setup visar loginrutan neutral inloggningstext i stället för statiska standardlösenordsinstruktioner.
 
 Admin kan skapa användare manuellt med ett tillfälligt lösenord som användaren måste byta vid första inloggning. När SMTP-env är satt kan admin i stället skicka inbjudnings- eller lösenordsresetlänkar, så användaren sätter sitt eget lösenord via länken. Dokumentdelningar via e-post kräver också SMTP. Importer kräver en aktiv icke-admin importägare, valbar i Settings.
+
+Om adminkontot tappas bort nollställs det manuellt i containern:
+
+```bash
+docker compose exec dokumenteraren python scripts/reset_admin_password.py
+```
+
+Verktyget frågar efter ett nytt temporärt lösenord och tvingar admin att byta det vid nästa inloggning. För automation kan lösenordet matas via stdin:
+
+```bash
+printf '%s\n' 'nytt-langt-temporart-losenord' \
+  | docker compose exec -T dokumenteraren python scripts/reset_admin_password.py --password-stdin
+```
 
 Misslyckade inloggningar skrivs till `/data/logs/fail2ban-auth.log`. Exempel för filter och jail ligger under `fail2ban/` och instruktioner finns i wikin.
 
