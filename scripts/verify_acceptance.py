@@ -315,6 +315,8 @@ def main() -> None:
             assert reset_cli.returncode == 0, reset_cli.stderr
             assert db.verify_password("cli-reset-admin", db.get_user_by_username("admin")["password_hash"])
             cli_login_page = client.get("/login")
+            assert "Första setup" not in cli_login_page.text
+            assert "nollställts via CLI" in cli_login_page.text
             cli_login = client.post(
                 "/login",
                 data={"username": "admin", "password": "cli-reset-admin", "csrf_token": csrf(cli_login_page)},
@@ -322,6 +324,7 @@ def main() -> None:
             )
             assert cli_login.status_code == 303 and cli_login.headers["location"] == "/change-password"
             cli_change_page = client.get("/change-password")
+            assert "Adminreset" in cli_change_page.text
             cli_changed = client.post(
                 "/change-password",
                 data={
@@ -334,6 +337,7 @@ def main() -> None:
             )
             assert cli_changed.status_code == 303
             client.post("/logout", data={"csrf_token": csrf(client.get('/'))}, follow_redirects=False)
+            assert "nollställts via CLI" not in client.get("/login").text
             user_login_page = client.get("/login")
             user_login = client.post(
                 "/login",

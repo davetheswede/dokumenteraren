@@ -205,7 +205,7 @@ def admin_guard(request: Request):
 def login_page(request: Request):
     if session_user(request):
         return RedirectResponse("/", status_code=303)
-    return render(request, "login.html", {"setup_required": db.setup_required()})
+    return render(request, "login.html", {"admin_password_state": db.admin_password_state()})
 
 
 @app.post("/login")
@@ -228,7 +228,7 @@ def login(request: Request, username: str = Form(...), password: str = Form(...)
         return render(
             request,
             "login.html",
-            {"error": "Fel användarnamn eller lösenord.", "setup_required": db.setup_required()},
+            {"error": "Fel användarnamn eller lösenord.", "admin_password_state": db.admin_password_state()},
             status_code=401,
         )
     request.session["user_id"] = user["id"]
@@ -252,7 +252,7 @@ def change_password_page(request: Request):
     if guard:
         return guard
     user = session_user(request)
-    return render(request, "change_password.html", {"setup_mode": user["role"] == "admin" and db.setup_required()})
+    return render(request, "change_password.html", {"admin_password_state": db.admin_password_state() if user["role"] == "admin" else "ready"})
 
 
 @app.post("/change-password")
@@ -268,18 +268,28 @@ def change_password(
     if guard:
         return guard
     user = session_user(request)
-    setup_mode = user["role"] == "admin" and db.setup_required()
+    admin_password_state = db.admin_password_state() if user["role"] == "admin" else "ready"
     if not db.verify_password(current_password, user["password_hash"]):
-        return render(request, "change_password.html", {"error": "Nuvarande lösenord stämmer inte.", "setup_mode": setup_mode}, status_code=400)
+        return render(
+            request,
+            "change_password.html",
+            {"error": "Nuvarande lösenord stämmer inte.", "admin_password_state": admin_password_state},
+            status_code=400,
+        )
     if len(new_password) < 8:
         return render(
             request,
             "change_password.html",
-            {"error": "Nytt lösenord behöver vara minst 8 tecken.", "setup_mode": setup_mode},
+            {"error": "Nytt lösenord behöver vara minst 8 tecken.", "admin_password_state": admin_password_state},
             status_code=400,
         )
     if new_password != confirm_password:
-        return render(request, "change_password.html", {"error": "Lösenorden matchar inte.", "setup_mode": setup_mode}, status_code=400)
+        return render(
+            request,
+            "change_password.html",
+            {"error": "Lösenorden matchar inte.", "admin_password_state": admin_password_state},
+            status_code=400,
+        )
     db.update_password(user["id"], new_password)
     return RedirectResponse("/", status_code=303)
 

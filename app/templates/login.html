@@ -5,8 +5,10 @@
   <div>
     <p class="eyebrow">Privat dokumentarkiv</p>
     <h1>Logga in</h1>
-    {% if setup_required %}
+    {% if admin_password_state == "first_setup" %}
     <p class="muted">Första setup använder adminkontot <code>admin</code>. Sätt ett nytt adminlösenord innan arkivet tas i bruk.</p>
+    {% elif admin_password_state == "cli_reset" %}
+    <p class="muted">Adminlösenordet har nollställts via CLI. Logga in som <code>admin</code> med det temporära lösenordet och byt det direkt.</p>
     {% else %}
     <p class="muted">Använd ditt konto eller en inbjudningslänk från administratören.</p>
     {% endif %}

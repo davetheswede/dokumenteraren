@@ -421,9 +421,20 @@ def setup_required() -> bool:
     return bool(not admin or admin["must_change_password"])
 
 
+def admin_password_state() -> str:
+    with connect() as conn:
+        admin = conn.execute("SELECT must_change_password FROM users WHERE username = ? AND role = 'admin'", ("admin",)).fetchone()
+        reset_pending = conn.execute("SELECT value FROM app_settings WHERE key = ?", ("admin_password_reset_pending",)).fetchone()
+    if not admin or not admin["must_change_password"]:
+        return "ready"
+    if reset_pending and reset_pending["value"] == "true":
+        return "cli_reset"
+    return "first_setup"
+
+
 def update_password(user_id: int, password: str) -> None:
     with connect() as conn:
-        row = conn.execute("SELECT user_key_wrapped FROM users WHERE id = ?", (user_id,)).fetchone()
+        row = conn.execute("SELECT user_key_wrapped, role FROM users WHERE id = ?", (user_id,)).fetchone()
         if row and row["user_key_wrapped"]:
             wrapped_key = wrap_key(unwrap_key(row["user_key_wrapped"]))
         else:
@@ -432,6 +443,14 @@ def update_password(user_id: int, password: str) -> None:
             "UPDATE users SET password_hash = ?, must_change_password = 0, user_key_wrapped = ? WHERE id = ?",
             (pwd_context.hash(password), wrapped_key, user_id),
         )
+        if row and row["role"] == "admin":
+            conn.execute(
+                """
+                INSERT INTO app_settings (key, value, updated_at) VALUES ('admin_password_reset_pending', 'false', ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+                """,
+                (utc_now(),),
+            )
 
 
 def set_temporary_password(user_id: int, password: str) -> bool:
@@ -470,6 +489,13 @@ def reset_admin_password(password: str, *, must_change_password: bool = True) ->
         conn.execute(
             "UPDATE password_resets SET used_at = ? WHERE user_id = ? AND used_at IS NULL",
             (utc_now(), row["id"]),
+        )
+        conn.execute(
+            """
+            INSERT INTO app_settings (key, value, updated_at) VALUES ('admin_password_reset_pending', 'true', ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+            """,
+            (utc_now(),),
         )
     record_audit_event(
         "admin_password_reset_cli",
