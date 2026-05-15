@@ -4,6 +4,7 @@ import asyncio
 import json
 import re
 import secrets
+import sqlite3
 import time
 from pathlib import Path
 from threading import Lock
@@ -204,7 +205,7 @@ def admin_guard(request: Request):
 def login_page(request: Request):
     if session_user(request):
         return RedirectResponse("/", status_code=303)
-    return render(request, "login.html")
+    return render(request, "login.html", {"setup_required": db.setup_required()})
 
 
 @app.post("/login")
@@ -224,7 +225,12 @@ def login(request: Request, username: str = Form(...), password: str = Form(...)
             **geo,
         )
         write_fail2ban_login_failure(ip, clean_username)
-        return render(request, "login.html", {"error": "Fel användarnamn eller lösenord."}, status_code=401)
+        return render(
+            request,
+            "login.html",
+            {"error": "Fel användarnamn eller lösenord.", "setup_required": db.setup_required()},
+            status_code=401,
+        )
     request.session["user_id"] = user["id"]
     request.session.pop("admin_user_id", None)
     audit_context(request, "login_success")
@@ -245,7 +251,8 @@ def change_password_page(request: Request):
     guard = page_guard(request, allow_password_change=True)
     if guard:
         return guard
-    return render(request, "change_password.html")
+    user = session_user(request)
+    return render(request, "change_password.html", {"setup_mode": user["role"] == "admin" and db.setup_required()})
 
 
 @app.post("/change-password")
@@ -261,12 +268,18 @@ def change_password(
     if guard:
         return guard
     user = session_user(request)
+    setup_mode = user["role"] == "admin" and db.setup_required()
     if not db.verify_password(current_password, user["password_hash"]):
-        return render(request, "change_password.html", {"error": "Nuvarande lösenord stämmer inte."}, status_code=400)
+        return render(request, "change_password.html", {"error": "Nuvarande lösenord stämmer inte.", "setup_mode": setup_mode}, status_code=400)
     if len(new_password) < 8:
-        return render(request, "change_password.html", {"error": "Nytt lösenord behöver vara minst 8 tecken."}, status_code=400)
+        return render(
+            request,
+            "change_password.html",
+            {"error": "Nytt lösenord behöver vara minst 8 tecken.", "setup_mode": setup_mode},
+            status_code=400,
+        )
     if new_password != confirm_password:
-        return render(request, "change_password.html", {"error": "Lösenorden matchar inte."}, status_code=400)
+        return render(request, "change_password.html", {"error": "Lösenorden matchar inte.", "setup_mode": setup_mode}, status_code=400)
     db.update_password(user["id"], new_password)
     return RedirectResponse("/", status_code=303)
 
@@ -516,6 +529,77 @@ def invite_user(request: Request, email: str = Form(...), csrf_token: str = Form
     return RedirectResponse("/settings?message=Användarinbjudan skickad.", status_code=303)
 
 
+@app.post("/settings/users/manual")
+def create_manual_user(
+    request: Request,
+    username: str = Form(...),
+    email: str = Form(""),
+    temporary_password: str = Form(...),
+    csrf_token: str = Form(...),
+):
+    verify_csrf(request, csrf_token)
+    guard = admin_guard(request)
+    if guard:
+        return guard
+    username = username.strip()
+    email = email.strip().lower()
+    if not re.fullmatch(r"[A-Za-z0-9_.@-]{2,80}", username):
+        return RedirectResponse("/settings?error=Användarnamn får bara innehålla bokstäver, siffror, punkt, bindestreck och understreck.", status_code=303)
+    if email and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+        return RedirectResponse("/settings?error=Ange en giltig e-postadress eller lämna fältet tomt.", status_code=303)
+    if len(temporary_password) < 8:
+        return RedirectResponse("/settings?error=Tillfälligt lösenord behöver vara minst 8 tecken.", status_code=303)
+    try:
+        user_id = db.create_user(username, temporary_password, email=email, role="user", must_change_password=True)
+    except sqlite3.IntegrityError:
+        return RedirectResponse("/settings?error=Användarnamnet finns redan.", status_code=303)
+    settings = db.get_settings()
+    if not settings.get("import_owner_user_id"):
+        db.set_settings({"import_owner_user_id": str(user_id)})
+    audit_context(request, "user_created_manual", metadata={"user_id": user_id, "username": username, "email": email})
+    return RedirectResponse("/settings?message=Användare skapad. Tillfälligt lösenord måste bytas vid första inloggning.", status_code=303)
+
+
+@app.post("/settings/users/{user_id}/temporary-password")
+def set_user_temporary_password(request: Request, user_id: int, temporary_password: str = Form(...), csrf_token: str = Form(...)):
+    verify_csrf(request, csrf_token)
+    guard = admin_guard(request)
+    if guard:
+        return guard
+    if len(temporary_password) < 8:
+        return RedirectResponse("/settings?error=Tillfälligt lösenord behöver vara minst 8 tecken.", status_code=303)
+    target = db.get_user(user_id)
+    if not target or target["role"] == "admin" or target["status"] != "active":
+        return RedirectResponse("/settings?error=Välj en aktiv icke-admin-användare.", status_code=303)
+    if not db.set_temporary_password(user_id, temporary_password):
+        return RedirectResponse("/settings?error=Lösenordet kunde inte sättas.", status_code=303)
+    audit_context(request, "user_temporary_password_set", metadata={"user_id": user_id, "username": target["username"]})
+    return RedirectResponse("/settings?message=Tillfälligt lösenord sparat. Användaren måste byta det vid nästa inloggning.", status_code=303)
+
+
+@app.post("/settings/users/{user_id}/reset-email")
+def send_user_password_reset(request: Request, user_id: int, csrf_token: str = Form(...)):
+    verify_csrf(request, csrf_token)
+    guard = admin_guard(request)
+    if guard:
+        return guard
+    if not mail.smtp_configured():
+        return RedirectResponse("/settings?error=Lösenordsreset via mail kräver SMTP-konfiguration.", status_code=303)
+    target = db.get_user(user_id)
+    if not target or target["role"] == "admin" or target["status"] != "active":
+        return RedirectResponse("/settings?error=Välj en aktiv icke-admin-användare.", status_code=303)
+    if not target["email"]:
+        return RedirectResponse("/settings?error=Användaren saknar e-postadress.", status_code=303)
+    admin = session_user(request)
+    token = db.create_password_reset(user_id, admin["id"])
+    if not token:
+        return RedirectResponse("/settings?error=Resetlänk kunde inte skapas.", status_code=303)
+    link = str(request.url_for("password_reset_page", token=token))
+    mail.send_mail(target["email"], "Sätt nytt lösenord i dokumenteraren", f"Öppna länken för att sätta ett nytt lösenord:\n\n{link}\n")
+    audit_context(request, "password_reset_created", metadata={"user_id": user_id, "username": target["username"]})
+    return RedirectResponse("/settings?message=Resetlänk skickad.", status_code=303)
+
+
 @app.post("/settings/import-owner")
 def save_import_owner(request: Request, import_owner_user_id: str = Form(""), csrf_token: str = Form(...)):
     verify_csrf(request, csrf_token)
@@ -742,6 +826,26 @@ def accept_user_invite(request: Request, token: str, username: str = Form(...), 
     user = db.get_user(user_id)
     db.record_audit_event("user_invite_accepted", actor_user_id=user_id, actor_username=user["username"], effective_user_id=user_id, effective_username=user["username"])
     request.session["user_id"] = user_id
+    return RedirectResponse("/", status_code=303)
+
+
+@app.get("/invites/password/{token}", response_class=HTMLResponse, name="password_reset_page")
+def password_reset_page(request: Request, token: str):
+    return render(request, "password_reset.html", {"token": token})
+
+
+@app.post("/invites/password/{token}")
+def password_reset(request: Request, token: str, password: str = Form(...), confirm_password: str = Form(...), csrf_token: str = Form(...)):
+    verify_csrf(request, csrf_token)
+    if password != confirm_password:
+        return render(request, "password_reset.html", {"token": token, "error": "Lösenorden matchar inte."}, status_code=400)
+    user_id = db.consume_password_reset(token, password)
+    if not user_id:
+        return render(request, "password_reset.html", {"token": token, "error": "Länken är ogiltig, förbrukad eller har gått ut."}, status_code=400)
+    user = db.get_user(user_id)
+    db.record_audit_event("password_reset_accepted", actor_user_id=user_id, actor_username=user["username"], effective_user_id=user_id, effective_username=user["username"])
+    request.session["user_id"] = user_id
+    request.session.pop("admin_user_id", None)
     return RedirectResponse("/", status_code=303)
 
 

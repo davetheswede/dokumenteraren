@@ -208,6 +208,7 @@ def main() -> None:
             assert fail2ban_log.exists() and "LOGIN_FAILED" in fail2ban_log.read_text(encoding="utf-8")
 
             login_page = client.get("/login")
+            assert "Första setup" in login_page.text
             login = client.post(
                 "/login",
                 data={"username": "admin", "password": "12345", "csrf_token": csrf(login_page)},
@@ -232,6 +233,17 @@ def main() -> None:
             admin_archive = client.get("/")
             assert admin_archive.status_code == 200
             assert "Adminläget har inte direkt filåtkomst" in admin_archive.text
+            login_after_setup = client.get("/login")
+            client.post("/logout", data={"csrf_token": csrf(admin_archive)}, follow_redirects=False)
+            login_after_setup = client.get("/login")
+            assert "Första setup" not in login_after_setup.text
+            admin_login_page = client.get("/login")
+            admin_login = client.post(
+                "/login",
+                data={"username": "admin", "password": "acceptance-12345", "csrf_token": csrf(admin_login_page)},
+                follow_redirects=False,
+            )
+            assert admin_login.status_code == 303
             admin_upload = client.get("/upload")
             assert admin_upload.status_code == 403
             admin_token = db.create_api_token(1, "admin-acceptance")
@@ -244,8 +256,28 @@ def main() -> None:
                 follow_redirects=False,
             )
             assert blocked_invite.status_code == 303 and "kr%C3%A4ver" in blocked_invite.headers["location"]
+            manual_created = client.post(
+                "/settings/users/manual",
+                data={
+                    "csrf_token": csrf(settings_page),
+                    "username": "ArkivUser",
+                    "email": "arkivuser@example.test",
+                    "temporary_password": "temporary-arkiv-user",
+                },
+                follow_redirects=False,
+            )
+            assert manual_created.status_code == 303
+            primary_user = db.get_user_by_username("ArkivUser")
+            assert primary_user and primary_user["role"] == "user" and primary_user["must_change_password"]
+            settings_page = client.get("/settings")
+            blocked_reset = client.post(
+                f"/settings/users/{primary_user['id']}/reset-email",
+                data={"csrf_token": csrf(settings_page)},
+                follow_redirects=False,
+            )
+            assert blocked_reset.status_code == 303 and "SMTP" in blocked_reset.headers["location"]
             blocked_impersonation = client.post(
-                "/settings/impersonate/2",
+                f"/settings/impersonate/{primary_user['id']}",
                 data={"csrf_token": csrf(settings_page)},
                 headers={"x-forwarded-for": "127.0.0.1"},
                 follow_redirects=False,
@@ -260,27 +292,39 @@ def main() -> None:
             assert allow_saved.status_code == 303
             settings_page = client.get("/settings", headers={"x-forwarded-for": "127.0.0.1"})
             impersonated = client.post(
-                "/settings/impersonate/2",
+                f"/settings/impersonate/{primary_user['id']}",
                 data={"csrf_token": csrf(settings_page)},
                 headers={"x-forwarded-for": "127.0.0.1"},
                 follow_redirects=False,
             )
             assert impersonated.status_code == 303
-            assert "Impersonerar David" in client.get("/").text
+            assert "Impersonerar ArkivUser" in client.get("/").text
             stopped = client.post("/impersonation/stop", data={"csrf_token": csrf(client.get('/'))}, follow_redirects=False)
             assert stopped.status_code == 303
-            logged_out_admin = client.post("/logout", data={"csrf_token": csrf(change_page)}, follow_redirects=False)
+            logged_out_admin = client.post("/logout", data={"csrf_token": csrf(client.get('/settings'))}, follow_redirects=False)
             assert logged_out_admin.status_code == 303
-            david_login_page = client.get("/login")
-            david_login = client.post(
+            user_login_page = client.get("/login")
+            user_login = client.post(
                 "/login",
-                data={"username": "David", "password": "Maj2Fant", "csrf_token": csrf(david_login_page)},
+                data={"username": "ArkivUser", "password": "temporary-arkiv-user", "csrf_token": csrf(user_login_page)},
                 follow_redirects=False,
             )
-            assert david_login.status_code == 303 and david_login.headers["location"] == "/"
-            david = db.get_user_by_username("David")
-            assert david and david["role"] == "user"
-            assert db.verify_password("Maj2Fant", david["password_hash"])
+            assert user_login.status_code == 303 and user_login.headers["location"] == "/change-password"
+            user_change_page = client.get("/change-password")
+            user_changed = client.post(
+                "/change-password",
+                data={
+                    "current_password": "temporary-arkiv-user",
+                    "new_password": "acceptance-user",
+                    "confirm_password": "acceptance-user",
+                    "csrf_token": csrf(user_change_page),
+                },
+                follow_redirects=False,
+            )
+            assert user_changed.status_code == 303 and user_changed.headers["location"] == "/"
+            primary_user = db.get_user_by_username("ArkivUser")
+            assert primary_user and primary_user["role"] == "user" and not primary_user["must_change_password"]
+            assert db.verify_password("acceptance-user", primary_user["password_hash"])
             assert len(DOCUMENT_TEMPLATES) >= 77
             assert any(item["id"] == "health_insurance" and item["name"] == "Sjukförsäkring" for item in DOCUMENT_TEMPLATES)
             assert any(item["id"] == "dog_insurance" and item["name"] == "Hundförsäkring" for item in DOCUMENT_TEMPLATES)
@@ -291,7 +335,7 @@ def main() -> None:
             assert upload_page.status_code == 200
             assert 'name="files"' in upload_page.text and 'name="template_id"' in upload_page.text
 
-            token = db.create_api_token(david["id"], "acceptance")
+            token = db.create_api_token(primary_user["id"], "acceptance")
             uploaded_ids: list[int] = []
             multi_upload = client.post(
                 "/upload",
@@ -476,7 +520,7 @@ def main() -> None:
 
             assert safe_zip_member("original", "../../..\\CON.txt", 99) == "original/99_CON.txt"
 
-            bob_invite = db.create_user_invite("bob@example.test", david["id"])
+            bob_invite = db.create_user_invite("bob@example.test", primary_user["id"])
             bob_id = db.accept_user_invite(bob_invite, "Bob", "acceptance-bob")
             assert bob_id
             bob_token = db.create_api_token(bob_id, "bob")
@@ -546,13 +590,13 @@ def main() -> None:
             )
             assert bob_update.status_code == 404
             client.post("/logout", data={"csrf_token": csrf(bob_delete_page)}, follow_redirects=False)
-            david_login_page = client.get("/login")
-            david_login = client.post(
+            user_login_page = client.get("/login")
+            user_login = client.post(
                 "/login",
-                data={"username": "David", "password": "Maj2Fant", "csrf_token": csrf(david_login_page)},
+                data={"username": "ArkivUser", "password": "acceptance-user", "csrf_token": csrf(user_login_page)},
                 follow_redirects=False,
             )
-            assert david_login.status_code == 303
+            assert user_login.status_code == 303
             revoke_page = client.get(f"/documents/{uploaded_ids[0]}")
             revoked = client.post(
                 f"/documents/{uploaded_ids[0]}/share/{bob_id}/revoke",
@@ -592,6 +636,59 @@ def main() -> None:
             assert db.authenticate_token(ui_token), "Skapad UI-token ska fungera som bearer token."
             replayed_token_page = client.get(token_location)
             assert ui_token not in replayed_token_page.text, "API-token ska inte visas igen via samma flash-länk."
+
+            reset_mail: list[str] = []
+            reset_old_env = {key: os.environ.get(key) for key in ["SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASS", "MAIL_FROM"]}
+            os.environ.update(
+                {
+                    "SMTP_HOST": "smtp.example.test",
+                    "SMTP_PORT": "587",
+                    "SMTP_USER": "noreply@example.test",
+                    "SMTP_PASS": "secret",
+                    "MAIL_FROM": "noreply@example.test",
+                }
+            )
+            from app.services import mail as app_mail
+
+            real_send_mail = app_mail.send_mail
+            app_mail.send_mail = lambda to_addr, subject, text, **kwargs: reset_mail.append(text)  # type: ignore[assignment]
+            try:
+                reset_settings_page = client.get("/settings")
+                reset_response = client.post(
+                    f"/settings/users/{primary_user['id']}/reset-email",
+                    data={"csrf_token": csrf(reset_settings_page)},
+                    follow_redirects=False,
+                )
+                assert reset_response.status_code == 303
+                assert reset_mail and "/invites/password/" in reset_mail[-1]
+                reset_token = reset_mail[-1].rsplit("/invites/password/", 1)[1].strip().split()[0]
+            finally:
+                app_mail.send_mail = real_send_mail  # type: ignore[assignment]
+                for key, value in reset_old_env.items():
+                    if value is None:
+                        os.environ.pop(key, None)
+                    else:
+                        os.environ[key] = value
+            reset_page = client.get(f"/invites/password/{reset_token}")
+            reset_done = client.post(
+                f"/invites/password/{reset_token}",
+                data={
+                    "csrf_token": csrf(reset_page),
+                    "password": "acceptance-user-reset",
+                    "confirm_password": "acceptance-user-reset",
+                },
+                follow_redirects=False,
+            )
+            assert reset_done.status_code == 303
+            assert db.verify_password("acceptance-user-reset", db.get_user(primary_user["id"])["password_hash"])
+            client.post("/logout", data={"csrf_token": csrf(client.get('/'))}, follow_redirects=False)
+            admin_login_page = client.get("/login")
+            admin_login = client.post(
+                "/login",
+                data={"username": "admin", "password": "acceptance-12345", "csrf_token": csrf(admin_login_page)},
+                follow_redirects=False,
+            )
+            assert admin_login.status_code == 303
 
             provider_forms = [
                 {

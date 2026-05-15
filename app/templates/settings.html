@@ -15,6 +15,14 @@
   <article class="work-panel">
     <h2>Användare</h2>
     <p class="muted">Aktuell IP: <code>{{ current_ip }}</code>. Impersonering: {% if impersonation_allowed %}tillåten{% else %}blockerad{% endif %}.</p>
+    <form method="post" action="/settings/users/manual" class="form-grid">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>Användarnamn <input name="username" autocomplete="off" required></label>
+      <label>E-post <input name="email" type="email" autocomplete="off"></label>
+      <label class="wide">Tillfälligt lösenord <input name="temporary_password" type="password" minlength="8" required></label>
+      <button class="primary">Skapa användare</button>
+    </form>
+    <p class="muted">Manuellt skapade användare måste byta det tillfälliga lösenordet vid första inloggning.</p>
     {% if user_invites_active %}
     <form method="post" action="/settings/users/invite" class="inline-form">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -25,14 +33,27 @@
     <p class="muted">Användarinbjudningar kräver SMTP-konfiguration.</p>
     {% endif %}
     <table>
-      <thead><tr><th>Användare</th><th>E-post</th><th>Roll</th><th>Status</th><th>Support</th></tr></thead>
+      <thead><tr><th>Användare</th><th>E-post</th><th>Roll</th><th>Status</th><th>Lösenord</th><th>Support</th></tr></thead>
       <tbody>
         {% for row in users %}
         <tr>
           <td>{{ row.username }}</td>
           <td>{{ row.email or "-" }}</td>
           <td>{{ row.role }}</td>
-          <td>{{ row.status }}</td>
+          <td>{{ row.status }}{% if row.must_change_password %}<br><span class="muted">måste byta lösenord</span>{% endif %}</td>
+          <td>
+            {% if row.role != "admin" %}
+            <form method="post" action="/settings/users/{{ row.id }}/temporary-password" class="inline-form">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <input name="temporary_password" type="password" minlength="8" placeholder="tillfälligt lösenord" required>
+              <button>Sätt</button>
+            </form>
+            <form method="post" action="/settings/users/{{ row.id }}/reset-email" class="inline-form">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <button {% if not smtp_configured or not row.email %}disabled{% endif %}>Maila reset</button>
+            </form>
+            {% else %}-{% endif %}
+          </td>
           <td>
             {% if row.role != "admin" and impersonation_allowed %}
             <form method="post" action="/settings/impersonate/{{ row.id }}" class="inline-form">
@@ -122,6 +143,7 @@
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <label>Importägare
         <select name="import_owner_user_id">
+          <option value="">Välj aktiv användare</option>
           {% for row in normal_users %}
           <option value="{{ row.id }}" {% if settings.import_owner_user_id == row.id|string %}selected{% endif %}>{{ row.username }}</option>
           {% endfor %}

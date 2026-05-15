@@ -64,7 +64,8 @@ Tanken är inte att vinna på flest features, utan på att vara lätt att först
 - Redaktion är på som standard innan dokumenttext skickas till en extern AI-provider.
 - API-token visas en gång och ska behandlas som ett lösenord.
 - Admin administrerar användare och systeminställningar men har inte direkt filåtkomst; support sker via IP-gated impersonering.
-- Flera användare har isolerade dokumentytor. Befintliga adminägda dokument migreras till användaren `David` vid uppstart.
+- Flera användare har isolerade dokumentytor.
+- Admin kan skapa användare manuellt med tillfälligt lösenord eller skicka inbjudnings-/resetlänkar när SMTP är konfigurerat.
 - Dokumentägare kan dela dokument via e-postinbjudan när SMTP är konfigurerat.
 - Auditloggen visar inloggningar med IP/GeoIP-status samt import, radering, nedladdning och export.
 - Misslyckade inloggningar skrivs även till `/data/logs/fail2ban-auth.log`; exempel finns i `fail2ban/` och [Fail2ban-wikin](docs/wiki/Fail2ban.md).
@@ -84,7 +85,7 @@ Målet är en liten app som gör rätt saker tydligt:
 - tydlig separation mellan import och arkiv
 - AI som ett valbart verktyg, inte en dold molnkoppling
 
-Appen är vibecodad tillsammans med AI. Jag är IT-arkitekt, inte programmerare till vardags, och projektet är ett sätt att lyfta in systemtänk, driftkrav och informationssäkerhet i en konkret self-hosted app.
+Appen är framtagen med fokus på systemtänk, driftkrav och informationssäkerhet i en konkret self-hosted miljö.
 
 ## Lightweight
 
@@ -111,9 +112,9 @@ Installationsguide, backup, importflöden, API och AI-konfiguration ligger i wik
 
 ## Multi-user Och Loggar
 
-Första multi-user-starten säkerställer användaren `David` och flyttar befintliga admin/importägda dokument till den användaren. Sätt `APP_DAVID_INITIAL_PASSWORD` före första boot om du vill ersätta projektets initialvärde.
+Appen levereras med adminkontot `admin`. Vid första inloggning krävs lösenordsbyte innan arkivet kan användas. Efter setup visar loginrutan neutral inloggningstext i stället för statiska standardlösenordsinstruktioner.
 
-Nya användare och dokumentdelningar skickas som e-postinbjudningar och kräver SMTP-env. Om SMTP saknas är inbjudningsknapparna blockerade. Importer kräver en aktiv icke-admin importägare, valbar i Settings.
+Admin kan skapa användare manuellt med ett tillfälligt lösenord som användaren måste byta vid första inloggning. När SMTP-env är satt kan admin i stället skicka inbjudnings- eller lösenordsresetlänkar, så användaren sätter sitt eget lösenord via länken. Dokumentdelningar via e-post kräver också SMTP. Importer kräver en aktiv icke-admin importägare, valbar i Settings.
 
 Misslyckade inloggningar skrivs till `/data/logs/fail2ban-auth.log`. Exempel för filter och jail ligger under `fail2ban/` och instruktioner finns i wikin.
 

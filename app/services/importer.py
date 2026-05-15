@@ -23,10 +23,6 @@ def import_owner_user_id() -> int:
         user = db.get_user(int(configured))
         if user and user["role"] != "admin" and user["status"] == "active":
             return int(user["id"])
-    david = db.get_user_by_username("David")
-    if david and david["role"] != "admin" and david["status"] == "active":
-        db.set_settings({"import_owner_user_id": str(david["id"])})
-        return int(david["id"])
     raise RuntimeError("Import kräver en aktiv icke-admin-användare som importägare.")
 
 

@@ -5,7 +5,11 @@
   <div>
     <p class="eyebrow">Privat dokumentarkiv</p>
     <h1>Logga in</h1>
-    <p class="muted">Första admin är <code>admin</code> med lösenord <code>12345</code>. Lösenordsbyte krävs direkt.</p>
+    {% if setup_required %}
+    <p class="muted">Första setup använder adminkontot <code>admin</code>. Sätt ett nytt adminlösenord innan arkivet tas i bruk.</p>
+    {% else %}
+    <p class="muted">Använd ditt konto eller en inbjudningslänk från administratören.</p>
+    {% endif %}
   </div>
   {% if error %}<div class="alert error">{{ error }}</div>{% endif %}
   <form method="post" action="/login" class="form-stack">

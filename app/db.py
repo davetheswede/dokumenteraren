@@ -15,7 +15,6 @@ from . import crypto
 from .config import DB_PATH, ensure_data_dirs
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-DAVID_DEFAULT_PASSWORD_HASH = "$2b$12$FD1S3.aofJmUaWMuZbXTX.N9rsjSBnK/vvhILmrPguvC6E9K9H8Gi"
 
 
 def utc_now() -> str:
@@ -113,12 +112,10 @@ def init_db() -> None:
         migrate_schema(conn)
         seed_admin(conn)
         seed_settings(conn)
-        david_id = ensure_david_user(conn)
         migrate_plaintext_documents(conn)
         migrate_document_checksums(conn)
         migrate_document_access(conn)
-        migrate_existing_documents_to_david(conn, david_id)
-        ensure_default_import_owner(conn, david_id)
+        ensure_default_import_owner(conn)
 
 
 def migrate_schema(conn: sqlite3.Connection) -> None:
@@ -173,6 +170,16 @@ def migrate_schema(conn: sqlite3.Connection) -> None:
             invited_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
             expires_at TEXT NOT NULL,
             accepted_at TEXT,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS password_resets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            token_hash TEXT NOT NULL UNIQUE,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            requested_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            expires_at TEXT NOT NULL,
+            used_at TEXT,
             created_at TEXT NOT NULL
         );
 
@@ -305,35 +312,20 @@ def seed_admin(conn: sqlite3.Connection) -> None:
     )
 
 
-def ensure_david_user(conn: sqlite3.Connection) -> int:
-    existing = conn.execute("SELECT id, user_key_wrapped FROM users WHERE username = ?", ("David",)).fetchone()
-    if existing:
-        if not existing["user_key_wrapped"]:
-            conn.execute(
-                "UPDATE users SET user_key_wrapped = ?, status = 'active' WHERE id = ?",
-                (wrap_key(crypto.random_key()), existing["id"]),
-            )
-        return int(existing["id"])
-    password = os.getenv("APP_DAVID_INITIAL_PASSWORD")
-    cursor = conn.execute(
-        """
-        INSERT INTO users (username, password_hash, role, must_change_password, user_key_wrapped, status, created_at)
-        VALUES (?, ?, 'user', 0, ?, 'active', ?)
-        """,
-        ("David", pwd_context.hash(password) if password else DAVID_DEFAULT_PASSWORD_HASH, wrap_key(crypto.random_key()), utc_now()),
-    )
-    return int(cursor.lastrowid)
-
-
-def ensure_default_import_owner(conn: sqlite3.Connection, david_id: int) -> None:
+def ensure_default_import_owner(conn: sqlite3.Connection) -> None:
     current = conn.execute("SELECT value FROM app_settings WHERE key = 'import_owner_user_id'").fetchone()
-    if not current or not current["value"]:
+    if current and current["value"]:
+        user = conn.execute("SELECT id FROM users WHERE id = ? AND role != 'admin' AND status = 'active'", (current["value"],)).fetchone()
+        if user:
+            return
+    first_user = conn.execute("SELECT id FROM users WHERE role != 'admin' AND status = 'active' ORDER BY id LIMIT 1").fetchone()
+    if first_user:
         conn.execute(
             """
             INSERT INTO app_settings (key, value, updated_at) VALUES ('import_owner_user_id', ?, ?)
             ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
             """,
-            (str(david_id), utc_now()),
+            (str(first_user["id"]), utc_now()),
         )
 
 
@@ -423,6 +415,12 @@ def create_user(username: str, password: str, email: str = "", role: str = "user
         return int(cursor.lastrowid)
 
 
+def setup_required() -> bool:
+    with connect() as conn:
+        admin = conn.execute("SELECT must_change_password FROM users WHERE username = ? AND role = 'admin'", ("admin",)).fetchone()
+    return bool(not admin or admin["must_change_password"])
+
+
 def update_password(user_id: int, password: str) -> None:
     with connect() as conn:
         row = conn.execute("SELECT user_key_wrapped FROM users WHERE id = ?", (user_id,)).fetchone()
@@ -434,6 +432,23 @@ def update_password(user_id: int, password: str) -> None:
             "UPDATE users SET password_hash = ?, must_change_password = 0, user_key_wrapped = ? WHERE id = ?",
             (pwd_context.hash(password), wrapped_key, user_id),
         )
+
+
+def set_temporary_password(user_id: int, password: str) -> bool:
+    with connect() as conn:
+        row = conn.execute("SELECT user_key_wrapped FROM users WHERE id = ? AND role != 'admin' AND status = 'active'", (user_id,)).fetchone()
+        if not row:
+            return False
+        if row["user_key_wrapped"]:
+            wrapped_key = wrap_key(unwrap_key(row["user_key_wrapped"]))
+        else:
+            wrapped_key = wrap_key(crypto.random_key())
+        conn.execute(
+            "UPDATE users SET password_hash = ?, must_change_password = 1, user_key_wrapped = ? WHERE id = ?",
+            (pwd_context.hash(password), wrapped_key, user_id),
+        )
+        conn.execute("UPDATE password_resets SET used_at = ? WHERE user_id = ? AND used_at IS NULL", (utc_now(), user_id))
+    return True
 
 
 def verify_password(password: str, password_hash: str) -> bool:
@@ -506,6 +521,56 @@ def accept_user_invite(token: str, username: str, password: str) -> int | None:
         user_id = int(cursor.lastrowid)
         conn.execute("UPDATE user_invites SET accepted_at = ? WHERE id = ?", (utc_now(), invite["id"]))
     return user_id
+
+
+def create_password_reset(user_id: int, requested_by: int, ttl_hours: int = 2) -> str | None:
+    from datetime import timedelta
+
+    with connect() as conn:
+        user = conn.execute("SELECT id FROM users WHERE id = ? AND role != 'admin' AND status = 'active'", (user_id,)).fetchone()
+        if not user:
+            return None
+        token = secrets.token_urlsafe(32)
+        token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        expires_at = (datetime.now(timezone.utc) + timedelta(hours=ttl_hours)).isoformat(timespec="seconds")
+        conn.execute("UPDATE password_resets SET used_at = ? WHERE user_id = ? AND used_at IS NULL", (utc_now(), user_id))
+        conn.execute(
+            """
+            INSERT INTO password_resets (token_hash, user_id, requested_by, expires_at, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (token_hash, user_id, requested_by, expires_at, utc_now()),
+        )
+    return token
+
+
+def consume_password_reset(token: str, password: str) -> int | None:
+    if len(password) < 8:
+        return None
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    with connect() as conn:
+        reset = conn.execute(
+            """
+            SELECT * FROM password_resets
+            WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?
+            """,
+            (token_hash, utc_now()),
+        ).fetchone()
+        if not reset:
+            return None
+        row = conn.execute("SELECT user_key_wrapped FROM users WHERE id = ? AND role != 'admin' AND status = 'active'", (reset["user_id"],)).fetchone()
+        if not row:
+            return None
+        if row["user_key_wrapped"]:
+            wrapped_key = wrap_key(unwrap_key(row["user_key_wrapped"]))
+        else:
+            wrapped_key = wrap_key(crypto.random_key())
+        conn.execute(
+            "UPDATE users SET password_hash = ?, must_change_password = 0, user_key_wrapped = ? WHERE id = ?",
+            (pwd_context.hash(password), wrapped_key, reset["user_id"]),
+        )
+        conn.execute("UPDATE password_resets SET used_at = ? WHERE id = ?", (utc_now(), reset["id"]))
+    return int(reset["user_id"])
 
 
 def create_share_invite(
@@ -716,42 +781,6 @@ def migrate_document_access(conn: sqlite3.Connection) -> None:
         )
 
 
-def migrate_existing_documents_to_david(conn: sqlite3.Connection, david_id: int) -> None:
-    admin = conn.execute("SELECT id FROM users WHERE username = 'admin'").fetchone()
-    admin_id = int(admin["id"]) if admin else None
-    rows = conn.execute(
-        """
-        SELECT d.id, d.uploaded_by
-        FROM documents d
-        LEFT JOIN users u ON u.id = d.uploaded_by
-        WHERE d.uploaded_by = ? OR u.id IS NULL OR u.role = 'admin'
-        """,
-        (admin_id or -1,),
-    ).fetchall()
-    for row in rows:
-        key = get_document_key_from_conn(conn, int(row["id"]))
-        if not key:
-            continue
-        wrapped = crypto.encrypt_bytes(key, user_key_for(conn, david_id)).decode("ascii")
-        conn.execute("UPDATE documents SET uploaded_by = ? WHERE id = ?", (david_id, row["id"]))
-        conn.execute(
-            """
-            INSERT OR REPLACE INTO document_keys (document_id, owner_user_id, wrapped_key, created_at)
-            VALUES (?, ?, ?, ?)
-            """,
-            (row["id"], david_id, wrapped, utc_now()),
-        )
-        conn.execute("DELETE FROM document_access WHERE document_id = ? AND user_id != ?", (row["id"], david_id))
-        conn.execute(
-            """
-            INSERT INTO document_access (document_id, user_id, permission, wrapped_key, granted_by, created_at)
-            VALUES (?, ?, 'owner', ?, ?, ?)
-            ON CONFLICT(document_id, user_id) DO UPDATE SET permission = 'owner', wrapped_key = excluded.wrapped_key
-            """,
-            (row["id"], david_id, wrapped, david_id, utc_now()),
-        )
-
-
 def get_document_key_from_conn(conn: sqlite3.Connection, document_id: int) -> bytes | None:
     row = conn.execute(
         """
@@ -919,7 +948,8 @@ def list_audit_events(user_id: int, role: str, limit: int = 100) -> list[sqlite3
                 SELECT * FROM audit_events
                 WHERE document_id IS NULL OR event_type IN (
                     'login_success', 'login_failed', 'user_invite_created', 'user_invite_accepted',
-                    'impersonation_start', 'impersonation_stop'
+                    'user_created_manual', 'user_temporary_password_set', 'password_reset_created',
+                    'password_reset_accepted', 'impersonation_start', 'impersonation_stop'
                 )
                 ORDER BY created_at DESC, id DESC LIMIT ?
                 """,

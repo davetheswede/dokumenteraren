@@ -23,7 +23,7 @@ Första konto:
 
 Appen kräver lösenordsbyte innan arkivet kan användas.
 
-Vid multi-user-migreringen säkerställs även en vanlig användare med namnet `David`. Befintliga admin/importägda dokument flyttas till den användaren så att adminläget kan sakna direkt filåtkomst. Sätt `APP_DAVID_INITIAL_PASSWORD` i `.env` före första start om du vill välja annat initialvärde.
+Efter första setup kan admin skapa användare manuellt med tillfälligt lösenord. Användaren måste byta lösenordet vid första inloggning. Om SMTP-env är satt kan admin även skicka inbjudnings- och lösenordsresetlänkar där mottagaren sätter sitt eget lösenord.
 
 ## Viktiga Miljövariabler
 
